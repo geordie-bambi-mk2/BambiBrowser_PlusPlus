@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 300px;
+      font-family: 'Segoe UI', Tahoma, sans-serif;
+      background: #120812;
+      color: #eec8ee;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #3d0a3d, #5a1060);
+      padding: 13px 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 2px solid #a020c0;
+    }
+    .header-title {
+      font-size: 1.05rem;
+      font-weight: 700;
+      letter-spacing: 1px;
+      color: #ff80ff;
+    }
+    .header-ver {
+      margin-left: auto;
+      font-size: 0.68rem;
+      color: #a060a0;
+    }
+
+    .section {
+      padding: 12px 14px;
+      border-bottom: 1px solid #2e0e2e;
+    }
+    .section-title {
+      font-size: 0.65rem;
+      text-transform: uppercase;
+      letter-spacing: 1.2px;
+      color: #8040a0;
+      margin-bottom: 9px;
+    }
+
+    /* ── Toggle ── */
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .toggle-label {
+      font-size: 0.9rem;
+      color: #eec8ee;
+    }
+    .switch {
+      position: relative;
+      width: 50px;
+      height: 26px;
+    }
+    .switch input { display: none; }
+    .slider {
+      position: absolute;
+      inset: 0;
+      background: #3a183a;
+      border-radius: 26px;
+      cursor: pointer;
+      transition: background 0.25s;
+      border: 1px solid #5a2a5a;
+    }
+    .slider::before {
+      content: '';
+      position: absolute;
+      width: 20px;
+      height: 20px;
+      left: 3px;
+      top: 2px;
+      background: #7a3a7a;
+      border-radius: 50%;
+      transition: transform 0.25s, background 0.25s;
+    }
+    input:checked + .slider {
+      background: #8010a0;
+      border-color: #cc40cc;
+    }
+    input:checked + .slider::before {
+      transform: translateX(24px);
+      background: #ff80ff;
+    }
+
+    /* ── Domain list ── */
+    .domain-list {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      margin-bottom: 9px;
+      max-height: 160px;
+      overflow-y: auto;
+    }
+    .domain-list::-webkit-scrollbar { width: 4px; }
+    .domain-list::-webkit-scrollbar-track { background: transparent; }
+    .domain-list::-webkit-scrollbar-thumb { background: #4a1a4a; border-radius: 4px; }
+
+    .domain-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #1e0a1e;
+      border-radius: 6px;
+      padding: 6px 10px;
+      border: 1px solid #3e183e;
+      gap: 8px;
+    }
+    .domain-name {
+      font-size: 0.82rem;
+      color: #dda0dd;
+      word-break: break-all;
+      flex: 1;
+    }
+    .domain-remove {
+      background: none;
+      border: none;
+      color: #7030a0;
+      cursor: pointer;
+      font-size: 0.9rem;
+      padding: 0 2px;
+      line-height: 1;
+      flex-shrink: 0;
+      border-radius: 3px;
+      transition: color 0.15s;
+    }
+    .domain-remove:hover { color: #ff60ff; }
+
+    /* ── Add domain row ── */
+    .add-row {
+      display: flex;
+      gap: 7px;
+    }
+    .add-input {
+      flex: 1;
+      background: #1e0a1e;
+      border: 1px solid #4a2050;
+      border-radius: 6px;
+      padding: 6px 9px;
+      color: #eec8ee;
+      font-size: 0.82rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .add-input:focus { border-color: #a020c0; }
+    .add-input::placeholder { color: #5a2a5a; }
+    .add-btn {
+      background: #5a0a70;
+      border: 1px solid #9030b0;
+      color: #ff80ff;
+      border-radius: 6px;
+      padding: 6px 13px;
+      font-size: 0.82rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .add-btn:hover { background: #8010a0; }
+    .add-btn:active { background: #a020c0; }
+
+    /* ── Status bar ── */
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.76rem;
+      color: #7040a0;
+    }
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #3a1a3a;
+      flex-shrink: 0;
+      transition: background 0.3s;
+    }
+    .status-dot.online  { background: #50d050; box-shadow: 0 0 6px #50d050; }
+    .status-dot.offline { background: #cc3030; }
+
+    .empty-msg {
+      font-size: 0.78rem;
+      color: #5a3060;
+      text-align: center;
+      padding: 6px 0;
+    }
+
+    /* ── Blacklist overrides ── */
+    .bl-title { color: #a04040; }
+    .bl-item  { border-color: #3e1818; background: #1e0a0a; }
+    .bl-item .domain-name   { color: #dda0a0; }
+    .bl-item .domain-remove { color: #703030; }
+    .bl-item .domain-remove:hover { color: #ff6060; }
+    .bl-input:focus { border-color: #c02020; }
+    .bl-add-btn {
+      background: #701010;
+      border-color: #b03030;
+      color: #ff8080;
+    }
+    .bl-add-btn:hover  { background: #a01818; }
+    .bl-add-btn:active { background: #c02020; }
+
+    /* ── Credit footer ── */
+    .credit {
+      padding: 9px 14px;
+      text-align: center;
+      font-size: 0.65rem;
+      color: #4a1a4a;
+      border-top: 1px solid #1e081e;
+      line-height: 1.5;
+    }
+    .credit a {
+      color: #7030a0;
+      text-decoration: none;
+    }
+    .credit a:hover { color: #bb60cc; text-decoration: underline; }
+  </style>
+</head>
+<body>
+
+  <div class="header">
+    <span class="header-title">&#x1F430; BambiBrowser+</span>
+    <span class="header-ver">v5.1</span>
+  </div>
+
+  <!-- Master toggle -->
+  <div class="section">
+    <div class="section-title">Bambi Mode</div>
+    <div class="toggle-row">
+      <span class="toggle-label">Enable hijack</span>
+      <label class="switch">
+        <input type="checkbox" id="masterToggle">
+        <span class="slider"></span>
+      </label>
+    </div>
+  </div>
+
+  <div class="section">
+    <div class="section-title">Playback</div>
+    <div class="toggle-row">
+      <span class="toggle-label">Multi-monitor</span>
+      <label class="switch">
+        <input type="checkbox" id="multiMonitorToggle">
+        <span class="slider"></span>
+      </label>
+    </div>
+  </div>
+
+  <!-- Domain list -->
+  <div class="section">
+    <div class="section-title">Active Domains</div>
+    <div class="domain-list" id="domainList">
+      <div class="empty-msg" id="emptyMsg" style="display:none">No domains added</div>
+    </div>
+    <div class="add-row">
+      <input type="text" id="domainInput" class="add-input" placeholder="example.com">
+      <button class="add-btn" id="addBtn">Add</button>
+    </div>
+  </div>
+
+  <!-- Blacklist -->
+  <div class="section">
+    <div class="section-title bl-title">&#x26D4; Blacklist (skip these URLs)</div>
+    <div class="domain-list" id="blacklistList">
+      <div class="empty-msg" id="blacklistEmptyMsg">No URLs blacklisted</div>
+    </div>
+    <div class="add-row">
+      <input type="text" id="blacklistInput" class="add-input bl-input" placeholder="keyword or path/segment">
+      <button class="add-btn bl-add-btn" id="addBlacklistBtn">Add</button>
+    </div>
+  </div>
+
+  <!-- Server status -->
+  <div class="section" style="border-bottom:none; padding-bottom:13px;">
+    <div class="status-row">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">Checking bambi_player…</span>
+    </div>
+  </div>
+
+  <script src="popup.js"></script>
+
+  <div class="credit">
+    Based on <a href="https://github.com/sissy3city/BambiBrowser" target="_blank">BambiBrowser</a> by sissy3city
+  </div>
+</body>
+</html>
