@@ -6,52 +6,89 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
 
     body {
-      width: 300px;
+      width: 320px;
       font-family: 'Segoe UI', Tahoma, sans-serif;
       background: #120812;
       color: #eec8ee;
+      display: flex;
+      flex-direction: column;
     }
 
     .header {
       background: linear-gradient(135deg, #3d0a3d, #5a1060);
-      padding: 13px 16px;
+      padding: 12px 14px;
       display: flex;
       align-items: center;
       gap: 10px;
-      border-bottom: 2px solid #a020c0;
+      border-bottom: 1px solid #6d1f83;
     }
     .header-title {
-      font-size: 1.05rem;
+      font-size: 1.02rem;
       font-weight: 700;
-      letter-spacing: 1px;
-      color: #ff80ff;
+      letter-spacing: 0.8px;
+      color: #ff9bff;
     }
     .header-ver {
       margin-left: auto;
       font-size: 0.68rem;
-      color: #a060a0;
+      color: #bb7fc9;
     }
+
+    .tabs {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      padding: 10px 10px 8px;
+      border-bottom: 1px solid #2e0e2e;
+      background: #130813;
+    }
+    .tab-btn {
+      border: 1px solid #4a1b55;
+      border-radius: 7px;
+      background: #1c0b1f;
+      color: #cfa4d8;
+      font-size: 0.72rem;
+      font-weight: 600;
+      letter-spacing: 0.3px;
+      padding: 7px 4px;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s, border-color 0.2s;
+    }
+    .tab-btn:hover { background: #26102a; color: #edbdf5; }
+    .tab-btn.active {
+      background: #6e1a85;
+      color: #ffd8ff;
+      border-color: #b73ad8;
+    }
+
+    .tab-panels {
+      padding: 10px;
+      min-height: 290px;
+    }
+    .tab-pane { display: none; }
+    .tab-pane.active { display: block; }
 
     .section {
-      padding: 12px 14px;
-      border-bottom: 1px solid #2e0e2e;
+      padding: 10px 0;
+      border-bottom: 1px solid #2a0e2a;
     }
+    .section:last-child { border-bottom: none; }
+
     .section-title {
-      font-size: 0.65rem;
+      font-size: 0.66rem;
       text-transform: uppercase;
-      letter-spacing: 1.2px;
-      color: #8040a0;
-      margin-bottom: 9px;
+      letter-spacing: 1.1px;
+      color: #9450ad;
+      margin-bottom: 8px;
     }
 
-    /* ── Toggle ── */
     .toggle-row {
       display: flex;
       align-items: center;
       justify-content: space-between;
     }
     .toggle-label {
-      font-size: 0.9rem;
+      font-size: 0.86rem;
       color: #eec8ee;
     }
     .switch {
@@ -89,17 +126,42 @@
       background: #ff80ff;
     }
 
-    /* ── Domain list ── */
+    .setting-row {
+      margin-top: 10px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .setting-label {
+      font-size: 0.8rem;
+      color: #c892d4;
+    }
+    .setting-select {
+      width: 100%;
+      background: #1e0a1e;
+      border: 1px solid #4a2050;
+      border-radius: 6px;
+      padding: 6px 9px;
+      color: #eec8ee;
+      font-size: 0.82rem;
+      outline: none;
+    }
+    .setting-select:focus { border-color: #a020c0; }
+    .setting-help {
+      font-size: 0.68rem;
+      color: #7e4f88;
+      line-height: 1.3;
+    }
+
     .domain-list {
       display: flex;
       flex-direction: column;
       gap: 5px;
       margin-bottom: 9px;
-      max-height: 160px;
+      max-height: 210px;
       overflow-y: auto;
     }
     .domain-list::-webkit-scrollbar { width: 4px; }
-    .domain-list::-webkit-scrollbar-track { background: transparent; }
     .domain-list::-webkit-scrollbar-thumb { background: #4a1a4a; border-radius: 4px; }
 
     .domain-item {
@@ -117,22 +179,50 @@
       color: #dda0dd;
       word-break: break-all;
       flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 6px;
     }
+    .domain-mode {
+      font-size: 0.63rem;
+      padding: 2px 6px;
+      border-radius: 3px;
+      white-space: nowrap;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    .domain-mode.auto {
+      background: rgba(80, 208, 80, 0.2);
+      color: #50d050;
+      border: 1px solid #50d050;
+    }
+    .domain-mode.manual {
+      background: rgba(255, 152, 0, 0.2);
+      color: #ff9800;
+      border: 1px solid #ff9800;
+    }
+    .domain-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .domain-config,
     .domain-remove {
       background: none;
       border: none;
-      color: #7030a0;
       cursor: pointer;
       font-size: 0.9rem;
-      padding: 0 2px;
       line-height: 1;
-      flex-shrink: 0;
       border-radius: 3px;
+      padding: 0 3px;
       transition: color 0.15s;
     }
+    .domain-config { color: #8f72d0; }
+    .domain-config:hover { color: #d2a8ff; }
+    .domain-remove { color: #7030a0; }
     .domain-remove:hover { color: #ff60ff; }
 
-    /* ── Add domain row ── */
     .add-row {
       display: flex;
       gap: 7px;
@@ -155,42 +245,21 @@
       border: 1px solid #9030b0;
       color: #ff80ff;
       border-radius: 6px;
-      padding: 6px 13px;
+      padding: 6px 12px;
       font-size: 0.82rem;
       font-weight: 600;
       cursor: pointer;
       transition: background 0.2s;
     }
     .add-btn:hover { background: #8010a0; }
-    .add-btn:active { background: #a020c0; }
-
-    /* ── Status bar ── */
-    .status-row {
-      display: flex;
-      align-items: center;
-      gap: 8px;
-      font-size: 0.76rem;
-      color: #7040a0;
-    }
-    .status-dot {
-      width: 7px;
-      height: 7px;
-      border-radius: 50%;
-      background: #3a1a3a;
-      flex-shrink: 0;
-      transition: background 0.3s;
-    }
-    .status-dot.online  { background: #50d050; box-shadow: 0 0 6px #50d050; }
-    .status-dot.offline { background: #cc3030; }
 
     .empty-msg {
       font-size: 0.78rem;
       color: #5a3060;
       text-align: center;
-      padding: 6px 0;
+      padding: 8px 0;
     }
 
-    /* ── Blacklist overrides ── */
     .bl-title { color: #a04040; }
     .bl-item  { border-color: #3e1818; background: #1e0a0a; }
     .bl-item .domain-name   { color: #dda0a0; }
@@ -202,16 +271,104 @@
       border-color: #b03030;
       color: #ff8080;
     }
-    .bl-add-btn:hover  { background: #a01818; }
-    .bl-add-btn:active { background: #c02020; }
+    .bl-add-btn:hover { background: #a01818; }
 
-    /* ── Credit footer ── */
-    .credit {
-      padding: 9px 14px;
+    .status-wrap {
+      border-top: 1px solid #2e0e2e;
+      border-bottom: 1px solid #1d0a1d;
+      padding: 9px 12px;
+      background: #130813;
+    }
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.76rem;
+      color: #8a61a3;
+    }
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #3a1a3a;
+      flex-shrink: 0;
+    }
+    .status-dot.online  { background: #50d050; box-shadow: 0 0 6px #50d050; }
+    .status-dot.offline { background: #cc3030; }
+
+    .help-btn {
+      background: none;
+      border: 1px solid #5a2a5a;
+      border-radius: 50%;
+      width: 20px;
+      height: 20px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #9450ad;
+      font-size: 0.7rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: border-color 0.18s, color 0.18s, background 0.18s;
+      flex-shrink: 0;
+      line-height: 1;
+      padding: 0;
+    }
+    .help-btn:hover {
+      background: #26102a;
+      border-color: #b73ad8;
+      color: #ff9bff;
+    }
+
+    .preset-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #160d18;
+      border-radius: 6px;
+      padding: 5px 10px;
+      border: 1px solid #33143a;
+      gap: 8px;
+    }
+    .preset-name {
+      font-size: 0.8rem;
+      color: #c892d4;
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .preset-add-btn {
+      background: #2a0a35;
+      border: 1px solid #6030a0;
+      color: #c070f0;
+      border-radius: 5px;
+      padding: 2px 9px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.18s;
+      flex-shrink: 0;
+    }
+    .preset-add-btn:hover { background: #5a0a70; }
+    .preset-add-btn:disabled {
+      background: #1a1020;
+      border-color: #2e1a3e;
+      color: #50d050;
+      cursor: default;
+    }
+    .preset-loading {
+      font-size: 0.72rem;
+      color: #5a3060;
+      padding: 4px 0;
       text-align: center;
-      font-size: 0.65rem;
+    }
+
+    .credit {
+      padding: 7px 12px;
+      text-align: center;
+      font-size: 0.63rem;
       color: #4a1a4a;
-      border-top: 1px solid #1e081e;
       line-height: 1.5;
     }
     .credit a {
@@ -222,71 +379,133 @@
   </style>
 </head>
 <body>
-
   <div class="header">
     <span class="header-title">&#x1F430; BambiBrowser+</span>
     <span class="header-ver">v5.1</span>
+    <button class="help-btn" id="helpBtn" title="Open user guide">?</button>
   </div>
 
-  <!-- Master toggle -->
-  <div class="section">
-    <div class="section-title">Bambi Mode</div>
-    <div class="toggle-row">
-      <span class="toggle-label">Enable hijack</span>
-      <label class="switch">
-        <input type="checkbox" id="masterToggle">
-        <span class="slider"></span>
-      </label>
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="general">General</button>
+    <button class="tab-btn" data-tab="domains">Domains</button>
+    <button class="tab-btn" data-tab="manual">Manual</button>
+    <button class="tab-btn" data-tab="blacklist">Blacklist</button>
+  </div>
+
+  <div class="tab-panels">
+    <div class="tab-pane active" id="tab-general">
+      <div class="section">
+        <div class="section-title">Bambi Mode</div>
+        <div class="toggle-row">
+          <span class="toggle-label">Enable hijack</span>
+          <label class="switch">
+            <input type="checkbox" id="masterToggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Playback</div>
+        <div class="toggle-row">
+          <span class="toggle-label">Multi-monitor</span>
+          <label class="switch">
+            <input type="checkbox" id="multiMonitorToggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="setting-row">
+          <label for="intentWindowSelect" class="setting-label">Manual mode click sensitivity</label>
+          <select id="intentWindowSelect" class="setting-select">
+            <option value="1200">Strict (fewer accidental triggers)</option>
+            <option value="2200">Balanced (recommended)</option>
+            <option value="3200">Relaxed (more forgiving)</option>
+          </select>
+          <div class="setting-help">Used on custom domains to match click intent with video play events.</div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="tab-pane" id="tab-domains">
+      <div class="section" id="presetsSection">
+        <div class="section-title">Suggested Sites</div>
+        <div class="domain-list" id="presetList" style="max-height:140px;overflow-y:auto">
+          <div class="preset-loading" id="presetLoading">Loading&#8230;</div>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-title">Active Domains</div>
+        <div class="domain-list" id="domainList">
+          <div class="empty-msg" id="emptyMsg" style="display:none">No domains added</div>
+        </div>
+        <div class="add-row">
+          <input type="text" id="domainInput" class="add-input" placeholder="example.com">
+          <button class="add-btn" id="addBtn">Add</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-pane" id="tab-manual">
+      <div class="section">
+        <div class="section-title">Manual Trigger</div>
+        <div class="toggle-row">
+          <span class="toggle-label">Enable shortcut trigger</span>
+          <label class="switch">
+            <input type="checkbox" id="manualShortcutToggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="setting-row">
+          <label for="manualShortcutSelect" class="setting-label">Keyboard shortcut</label>
+          <select id="manualShortcutSelect" class="setting-select">
+            <option value="Alt+Shift+V">Alt+Shift+V</option>
+            <option value="Ctrl+Shift+V">Ctrl+Shift+V</option>
+            <option value="Alt+V">Alt+V</option>
+            <option value="Ctrl+Alt+V">Ctrl+Alt+V</option>
+          </select>
+          <div class="setting-help">Press shortcut on any page, then click the player you want. This bypasses domain matching.</div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Local File</div>
+        <div class="setting-help" style="margin-bottom:8px">Pick a local video file and send it directly to VLC.</div>
+        <input type="file" id="localFilePicker" accept="video/*,.mp4,.mkv,.avi,.mov,.wmv,.flv,.webm,.m4v,.mpg,.mpeg,.ts,.m2ts,.ogg,.ogv" style="display:none;">
+        <div class="add-row">
+          <input type="text" id="localFileInput" class="add-input" placeholder="No file selected">
+          <button class="add-btn" id="localFileBrowseBtn">Browse</button>
+          <button class="add-btn" id="localFileBtn">&#9654; Play</button>
+        </div>
+        <div id="localFileStatus" style="font-size:0.72rem;color:#7e4f88;margin-top:6px;min-height:1em;"></div>
+      </div>
+    </div>
+
+    <div class="tab-pane" id="tab-blacklist">
+      <div class="section">
+        <div class="section-title bl-title">&#x26D4; Blacklist URLs</div>
+        <div class="domain-list" id="blacklistList">
+          <div class="empty-msg" id="blacklistEmptyMsg">No URLs blacklisted</div>
+        </div>
+        <div class="add-row">
+          <input type="text" id="blacklistInput" class="add-input bl-input" placeholder="keyword or path segment">
+          <button class="add-btn bl-add-btn" id="addBlacklistBtn">Add</button>
+        </div>
+      </div>
     </div>
   </div>
 
-  <div class="section">
-    <div class="section-title">Playback</div>
-    <div class="toggle-row">
-      <span class="toggle-label">Multi-monitor</span>
-      <label class="switch">
-        <input type="checkbox" id="multiMonitorToggle">
-        <span class="slider"></span>
-      </label>
-    </div>
-  </div>
-
-  <!-- Domain list -->
-  <div class="section">
-    <div class="section-title">Active Domains</div>
-    <div class="domain-list" id="domainList">
-      <div class="empty-msg" id="emptyMsg" style="display:none">No domains added</div>
-    </div>
-    <div class="add-row">
-      <input type="text" id="domainInput" class="add-input" placeholder="example.com">
-      <button class="add-btn" id="addBtn">Add</button>
-    </div>
-  </div>
-
-  <!-- Blacklist -->
-  <div class="section">
-    <div class="section-title bl-title">&#x26D4; Blacklist (skip these URLs)</div>
-    <div class="domain-list" id="blacklistList">
-      <div class="empty-msg" id="blacklistEmptyMsg">No URLs blacklisted</div>
-    </div>
-    <div class="add-row">
-      <input type="text" id="blacklistInput" class="add-input bl-input" placeholder="keyword or path/segment">
-      <button class="add-btn bl-add-btn" id="addBlacklistBtn">Add</button>
-    </div>
-  </div>
-
-  <!-- Server status -->
-  <div class="section" style="border-bottom:none; padding-bottom:13px;">
+  <div class="status-wrap">
     <div class="status-row">
       <div class="status-dot" id="statusDot"></div>
-      <span id="statusText">Checking bambi_player…</span>
+      <span id="statusText">Checking bambi_player...</span>
     </div>
   </div>
-
-  <script src="popup.js"></script>
 
   <div class="credit">
     Based on <a href="https://github.com/sissy3city/BambiBrowser" target="_blank">BambiBrowser</a> by sissy3city
   </div>
+
+  <script src="popup.js"></script>
 </body>
 </html>
