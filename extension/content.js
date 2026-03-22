@@ -182,10 +182,36 @@ if (window.__bambiLoaded) {
   let manualPlayGraceUntil = 0;
   let manualPlayHandling = false;
   let bambiPresets = [];
+  let bambiAdDomains = [];
+
+  // Input lock (single-monitor mode)
+  let bambiInputLockEnabled = false;
+  let bambiInputLockDurationMs = 3600000;
+  let bambiInputLockLockedUntil = 0;
+
+  // Auto-play fallback URL
+  let bambiAutoPlayEnabled = false;
+  let bambiAutoPlayUrl = "";
+  let bambiAutoPlayDelayMs = 600000;
+  let autoPlayFallbackTimerId = null;
+  let bambiRemotePlayerHints = {};
+  let bambiConfigStale = false;
+  let bambiConfigVersion = null;
 
   // ------------------------------------------------------
   // DOMAIN MATCHING
   // ------------------------------------------------------
+
+  // Validates the shape of a fetched remote config object.
+  function validateRemoteConfig(json) {
+    if (!json || typeof json !== "object" || Array.isArray(json)) return false;
+    if ("version" in json && (typeof json.version !== "number" || json.version < 1)) return false;
+    if ("domains" in json && (typeof json.domains !== "object" || Array.isArray(json.domains) || json.domains === null)) return false;
+    if ("presets" in json && !Array.isArray(json.presets)) return false;
+    if ("adDomains" in json && !Array.isArray(json.adDomains)) return false;
+    return !!(json.domains || json.presets || json.adDomains);
+  }
+
   function normalizeAssociatedDomainMap(rawMap) {
     const normalized = {};
     if (!rawMap || typeof rawMap !== "object") return normalized;
@@ -228,46 +254,106 @@ if (window.__bambiLoaded) {
       return;
     }
 
+    // ── Fetch ────────────────────────────────────────────
+    let json = null;
+    let usedCache = false;
+
     try {
       const response = await fetch(REMOTE_DOMAIN_MAP_URL, { cache: "no-store" });
-      if (!response.ok) return;
-
-      const json = await response.json();
-
-      // Support both legacy flat object and new { domains, presets } structure
-      const rawMap = (json && typeof json === "object" && json.domains && typeof json.domains === "object")
-        ? json.domains
-        : (json && typeof json === "object" && !Array.isArray(json) && !json.presets ? json : {});
-
-      const normalizedMap = normalizeAssociatedDomainMap(rawMap);
-
-      // Merge preset subdomains into the assoc map so video CDN hosts are recognised
-      const rawPresets = Array.isArray(json?.presets) ? json.presets : [];
-      rawPresets.forEach(p => {
-        const key = normalizeDomainInput(p.domain || "");
-        if (!key || !Array.isArray(p.subdomains) || !p.subdomains.length) return;
-        const subs = p.subdomains
-          .map(s => normalizeDomainInput(String(s).replace(/^\*\./, "")))
-          .filter(Boolean);
-        if (subs.length) {
-          normalizedMap[key] = Array.from(new Set([...(normalizedMap[key] || []), ...subs]));
+      if (response.ok) {
+        const candidate = await response.json();
+        if (validateRemoteConfig(candidate)) {
+          json = candidate;
+          // Persist as last-known-good
+          chrome.storage.local.set({ bambiLastGoodConfig: json, bambiLastGoodConfigAt: now });
+        } else {
+          console.log("[Bambi] remote config failed schema validation — falling back to last-known-good");
         }
-      });
-
-      bambiDomainAssocMap = normalizedMap;
-      bambiDomainAssocMapFetchedAt = now;
-      bambiPresets = rawPresets;
-
-      chrome.storage.local.set({
-        bambiDomainAssocMap: normalizedMap,
-        bambiDomainAssocMapFetchedAt: now,
-        bambiPresets: rawPresets,
-      });
-
-      console.log("[Bambi] remote config refreshed:", Object.keys(normalizedMap).length, "assoc domains,", rawPresets.length, "presets");
+      }
     } catch (e) {
-      console.log("[Bambi] remote domain association refresh failed:", e.message);
+      console.log("[Bambi] remote config fetch failed:", e.message);
     }
+
+    // ── Fallback ─────────────────────────────────────────
+    if (!json) {
+      const cached = await new Promise(r =>
+        chrome.storage.local.get({ bambiLastGoodConfig: null }, r)
+      );
+      if (cached.bambiLastGoodConfig) {
+        json = cached.bambiLastGoodConfig;
+        usedCache = true;
+        console.log("[Bambi] using last-known-good config (stale)");
+      } else {
+        console.log("[Bambi] no config available — remote fetch failed and no cache");
+        return;
+      }
+    }
+
+    // ── Parse ─────────────────────────────────────────────
+    // Support both legacy flat object and new { domains, presets } structure
+    const rawMap = (json.domains && typeof json.domains === "object" && !Array.isArray(json.domains))
+      ? json.domains
+      : (json && typeof json === "object" && !Array.isArray(json) && !json.presets && !json.domains ? json : {});
+
+    const normalizedMap = normalizeAssociatedDomainMap(rawMap);
+
+    const rawPresets = Array.isArray(json.presets) ? json.presets : [];
+    rawPresets.forEach(p => {
+      const key = normalizeDomainInput(p.domain || "");
+      if (!key || !Array.isArray(p.subdomains) || !p.subdomains.length) return;
+      const subs = p.subdomains
+        .map(s => normalizeDomainInput(String(s).replace(/^\*\./, "")))
+        .filter(Boolean);
+      if (subs.length) {
+        normalizedMap[key] = Array.from(new Set([...(normalizedMap[key] || []), ...subs]));
+      }
+    });
+
+    // Extract remote player hints keyed by domain
+    const remoteHints = {};
+    rawPresets.forEach(p => {
+      const key = normalizeDomainInput(p.domain || "");
+      if (key && p.playerHints && typeof p.playerHints === "object") {
+        remoteHints[key] = p.playerHints;
+      }
+    });
+
+    // Deduplicated + normalized ad domains — host-based only
+    const newAdDomains = Array.from(new Set(
+      (Array.isArray(json.adDomains) ? json.adDomains : [])
+        .filter(d => typeof d === "string" && d.trim())
+        .map(d => d.trim().toLowerCase())
+    ));
+
+    // ── Apply ─────────────────────────────────────────────
+    bambiDomainAssocMap = normalizedMap;
+    bambiPresets = rawPresets;
+    bambiRemotePlayerHints = remoteHints;
+    bambiAdDomains = newAdDomains;
+    bambiConfigVersion = typeof json.version === "number" ? json.version : null;
+    bambiConfigStale = usedCache;
+
+    // Only advance the fetch-timestamp for genuine fresh responses so stale
+    // mode retries on the next page load rather than waiting a full 6 hours.
+    if (!usedCache) {
+      bambiDomainAssocMapFetchedAt = now;
+    }
+
+    chrome.storage.local.set({
+      bambiDomainAssocMap: normalizedMap,
+      bambiDomainAssocMapFetchedAt: usedCache ? bambiDomainAssocMapFetchedAt : now,
+      bambiPresets: rawPresets,
+      bambiAdDomains: newAdDomains,
+      bambiRemotePlayerHints: remoteHints,
+      bambiConfigStale: usedCache,
+      bambiConfigVersion: bambiConfigVersion,
+    });
+
+    console.log(
+      "[Bambi] config applied:", Object.keys(normalizedMap).length, "assoc,",
+      rawPresets.length, "presets,", newAdDomains.length, "ad domains",
+      usedCache ? "(stale)" : `(fresh v${bambiConfigVersion ?? "?"})`
+    );
   }
 
   function checkDomainMatch(domains) {
@@ -297,7 +383,23 @@ if (window.__bambiLoaded) {
   function getHintForCurrentDomain() {
     const key = getMatchedConfiguredDomain();
     if (!key) return null;
-    return bambiDomainPlayerHints[key] || null;
+    // Local learned hint (user-clicked) takes priority over remote preset hint
+    return bambiDomainPlayerHints[key] || bambiRemotePlayerHints[key] || null;
+  }
+
+  // Returns true when the page hostname matches a known ad/tracking domain.
+  // Uses host-based matching so query-string text can never trigger a false positive.
+  function isAdDomain() {
+    let currentHost = "";
+    try {
+      currentHost = new URL(location.href).hostname.toLowerCase();
+    } catch {
+      currentHost = hostname;
+    }
+    return bambiAdDomains.some(ad => {
+      if (!ad) return false;
+      return currentHost === ad || currentHost.endsWith("." + ad);
+    });
   }
 
   // ------------------------------------------------------
@@ -305,7 +407,10 @@ if (window.__bambiLoaded) {
   // ------------------------------------------------------
   function isBlacklisted() {
     const url = location.href.toLowerCase();
-    return bambiBlacklist.some(b => url.includes(b.toLowerCase()));
+    // User manual blacklist: substring match on full URL (intentional — supports path patterns)
+    if (bambiBlacklist.some(b => b && url.includes(b.toLowerCase()))) return true;
+    // Ad domains: host-based only (prevents false positives from query strings or referrer text)
+    return isAdDomain();
   }
 
   // Returns true when the current path matches a preset ignorePaths prefix,
@@ -348,6 +453,7 @@ if (window.__bambiLoaded) {
     if (changes.bambiMultiMonitor) {
       bambiMultiMonitor = Boolean(changes.bambiMultiMonitor.newValue);
       console.log("[Bambi] storage change → multi-monitor:", bambiMultiMonitor);
+      enforceInputLockState("multi-monitor-change");
     }
     if (changes.bambiDomainPlayerHints) {
       bambiDomainPlayerHints = changes.bambiDomainPlayerHints.newValue || {};
@@ -379,6 +485,54 @@ if (window.__bambiLoaded) {
     if (changes.bambiPresets) {
       bambiPresets = Array.isArray(changes.bambiPresets.newValue) ? changes.bambiPresets.newValue : [];
       console.log("[Bambi] storage change → presets updated:", bambiPresets.length);
+    }
+    if (changes.bambiAdDomains) {
+      bambiAdDomains = Array.isArray(changes.bambiAdDomains.newValue) 
+        ? changes.bambiAdDomains.newValue.map(d => String(d).toLowerCase())
+        : [];
+      console.log("[Bambi] storage change → ad domains updated:", bambiAdDomains.length);
+    }
+    if (changes.bambiRemotePlayerHints) {
+      bambiRemotePlayerHints = (changes.bambiRemotePlayerHints.newValue &&
+        typeof changes.bambiRemotePlayerHints.newValue === "object")
+        ? changes.bambiRemotePlayerHints.newValue : {};
+    }
+    if (changes.bambiConfigStale !== undefined) {
+      bambiConfigStale = Boolean(changes.bambiConfigStale.newValue);
+    }
+    if (changes.bambiConfigVersion !== undefined) {
+      bambiConfigVersion = changes.bambiConfigVersion.newValue ?? null;
+    }
+    if (changes.bambiInputLockEnabled !== undefined) {
+      const nextInputLockEnabled = Boolean(changes.bambiInputLockEnabled.newValue);
+      if ((bambiMultiMonitor || isInputLockLockdownActive()) && !nextInputLockEnabled) {
+        bambiInputLockEnabled = true;
+        chrome.storage.local.set({ bambiInputLockEnabled: true });
+      } else {
+        bambiInputLockEnabled = nextInputLockEnabled;
+      }
+    }
+    if (changes.bambiInputLockDurationMs !== undefined) {
+      bambiInputLockDurationMs = Number(changes.bambiInputLockDurationMs.newValue) || 3600000;
+    }
+    if (changes.bambiInputLockLockedUntil !== undefined) {
+      bambiInputLockLockedUntil = Number(changes.bambiInputLockLockedUntil.newValue) || 0;
+      if (bambiInputLockLockedUntil && !isInputLockLockdownActive()) {
+        bambiInputLockLockedUntil = 0;
+        chrome.storage.local.set({ bambiInputLockLockedUntil: 0 });
+      }
+      enforceInputLockState("lockdown-until-change");
+    }
+    if (changes.bambiAutoPlayEnabled !== undefined) {
+      bambiAutoPlayEnabled = Boolean(changes.bambiAutoPlayEnabled.newValue);
+      if (bambiAutoPlayEnabled) scheduleAutoPlayFallback(); else cancelAutoPlayFallback();
+    }
+    if (changes.bambiAutoPlayUrl !== undefined) {
+      bambiAutoPlayUrl = String(changes.bambiAutoPlayUrl.newValue || "");
+    }
+    if (changes.bambiAutoPlayDelayMs !== undefined) {
+      bambiAutoPlayDelayMs = Number(changes.bambiAutoPlayDelayMs.newValue) || 600000;
+      if (bambiAutoPlayEnabled) scheduleAutoPlayFallback();
     }
   });
 
@@ -704,6 +858,7 @@ if (window.__bambiLoaded) {
         if (sent) {
           console.log("[Bambi] ✓ Manual trigger sent video to VLC");
           videoAlreadySent = true;
+          cancelAutoPlayFallback();
           removeManualTriggerOverlay();
           return;
         }
@@ -735,10 +890,16 @@ if (window.__bambiLoaded) {
 
   function isVideoInLearnedContainer(videoEl) {
     const hint = getHintForCurrentDomain();
-    if (!hint?.containerSelector || !(videoEl instanceof HTMLVideoElement)) return true;
+    if (!(videoEl instanceof HTMLVideoElement)) return true;
+
+    // Local learned hints have a single `containerSelector` string;
+    // remote preset hints carry a `containerSelectors` array. Handle both.
+    const selectors = hint?.containerSelectors ||
+      (hint?.containerSelector ? [hint.containerSelector] : []);
+    if (!selectors.length) return true;
 
     try {
-      return videoEl.closest(hint.containerSelector) !== null;
+      return selectors.some(sel => videoEl.closest(sel) !== null);
     } catch {
       return true;
     }
@@ -832,6 +993,50 @@ if (window.__bambiLoaded) {
     return { ok: true };
   }
 
+  // ------------------------------------------------------
+  // INPUT LOCK HELPERS
+  // ------------------------------------------------------
+  function isInputLockLockdownActive() {
+    return Number(bambiInputLockLockedUntil) > Date.now();
+  }
+
+  function enforceInputLockState(reason = "") {
+    const lockdownActive = isInputLockLockdownActive();
+    const shouldForceEnable = bambiMultiMonitor || lockdownActive;
+
+    if (bambiInputLockLockedUntil && !lockdownActive) {
+      bambiInputLockLockedUntil = 0;
+      chrome.storage.local.set({ bambiInputLockLockedUntil: 0 });
+    }
+
+    if (shouldForceEnable && !bambiInputLockEnabled) {
+      bambiInputLockEnabled = true;
+      chrome.storage.local.set({ bambiInputLockEnabled: true });
+      console.log("[Bambi] forcing input lock on:", reason || "state-enforcement");
+    }
+  }
+
+  // ------------------------------------------------------
+  // AUTO-PLAY FALLBACK HELPERS
+  // ------------------------------------------------------
+  function scheduleAutoPlayFallback() {
+    cancelAutoPlayFallback();
+    if (!bambiAutoPlayEnabled || !bambiAutoPlayUrl || !bambiAutoPlayDelayMs) return;
+    if (!isBambiActivated()) return;
+    autoPlayFallbackTimerId = setTimeout(() => {
+      autoPlayFallbackTimerId = null;
+      if (!videoAlreadySent && bambiAutoPlayUrl && /^https?:\/\/.+/.test(bambiAutoPlayUrl)) {
+        console.log("[Bambi] auto-play fallback → opening:", bambiAutoPlayUrl);
+        chrome.runtime.sendMessage({ type: "BAMBI_OPEN_TAB", url: bambiAutoPlayUrl });
+        scheduleAutoPlayFallback(); // reschedule for next cycle
+      }
+    }, bambiAutoPlayDelayMs);
+  }
+
+  function cancelAutoPlayFallback() {
+    if (autoPlayFallbackTimerId !== null) { clearTimeout(autoPlayFallbackTimerId); autoPlayFallbackTimerId = null; }
+  }
+
   function suppressKeys(e) {
     e.stopPropagation();
     e.preventDefault();
@@ -840,9 +1045,13 @@ if (window.__bambiLoaded) {
   document.addEventListener("fullscreenchange", () => {
     console.log("[Bambi] fullscreenchange →", !!document.fullscreenElement);
     if (document.fullscreenElement && bambiInducedFullscreen) {
-      enableKeyboardLock();
-      enablePointerLock();
-      window.addEventListener("keydown", suppressKeys, true);
+      enforceInputLockState("fullscreen-enter");
+      const shouldLock = bambiMultiMonitor || bambiInputLockEnabled || isInputLockLockdownActive();
+      if (shouldLock) {
+        enableKeyboardLock();
+        enablePointerLock();
+        window.addEventListener("keydown", suppressKeys, true);
+      }
     } else if (!document.fullscreenElement) {
       bambiInducedFullscreen = false;
       window.removeEventListener("keydown", suppressKeys, true);
@@ -867,10 +1076,14 @@ if (window.__bambiLoaded) {
     if (!isMatchedDomain || isBlacklisted() || !isBambiActivated()) return;
     if (domainMode !== "auto") {
       console.log("[Bambi] URL change on manual mode domain → skipping auto hijack");
+      cancelAutoPlayFallback();
       resetVideoState();
+      scheduleAutoPlayFallback();
       return;
     }
+    cancelAutoPlayFallback();
     resetVideoState();
+    scheduleAutoPlayFallback();
     setTimeout(tryHijackOrFallback, 600);
     setTimeout(tryHijackOrFallback, 1500);
   }
@@ -917,8 +1130,12 @@ if (window.__bambiLoaded) {
 
       if (hidden) return true;
 
+      if (isHintBlockedVideo(video)) return true;
+
       // No usable media source loaded
       if (video.networkState === HTMLMediaElement.NETWORK_NO_SOURCE) return true;
+
+      if (isHintPreferredVideo(video)) return false;
 
       const src = (video.currentSrc || video.src || "").toLowerCase();
       const cls = String(video.className || "").toLowerCase();
@@ -975,9 +1192,12 @@ if (window.__bambiLoaded) {
 
     if (!candidates.length) return null;
 
+    const hintedMainCandidates = candidates.filter(v => isHintPreferredVideo(v));
+    const rankedCandidates = hintedMainCandidates.length ? hintedMainCandidates : candidates;
+
     // For hypnotube prefer the CDN-hosted source
     if (hostname.includes("hypnotube")) {
-      const htVideo = candidates.find(v => {
+      const htVideo = rankedCandidates.find(v => {
         const src = v.currentSrc || v.src || "";
         return src.includes("media.hypnotube.com") ||
                src.includes("cdn.hypnotube.com") ||
@@ -991,7 +1211,7 @@ if (window.__bambiLoaded) {
     }
 
     // Generic fallback: favor the largest, central, non-muted active player.
-    candidates.sort((a, b) => {
+    rankedCandidates.sort((a, b) => {
       function score(video) {
         const rect = video.getBoundingClientRect();
         const area = getVideoArea(video);
@@ -1005,6 +1225,8 @@ if (window.__bambiLoaded) {
         if (!video.muted) total += 25000;
         if (video.controls) total += 15000;
         if (!video.paused) total += 40000;
+        if (isHintPreferredVideo(video)) total += 80000;
+        if (isHintBlockedVideo(video)) total -= 120000;
         // Favour clearly content-length videos; penalise suspiciously short ones (likely preroll ads)
         if (Number.isFinite(video.duration) && video.duration > 60) total += 30000;
         if (Number.isFinite(video.duration) && video.duration > 0 && video.duration < 31) total -= 20000;
@@ -1014,7 +1236,7 @@ if (window.__bambiLoaded) {
       return score(b) - score(a);
     });
 
-    mainVideo = candidates[0];
+    mainVideo = rankedCandidates[0];
     const src = mainVideo.currentSrc || mainVideo.src || "";
     console.log("[Bambi] MAIN video locked:", src.substring(0, 80));
     return mainVideo;
@@ -1023,6 +1245,58 @@ if (window.__bambiLoaded) {
   function isMainSiteVideo(video) {
     const v = findMainVideo();
     return v && v === video;
+  }
+
+  function getHintSelectorList(hint, key) {
+    if (!hint || typeof hint !== "object") return [];
+    const raw = hint[key];
+    if (!Array.isArray(raw)) return [];
+    return raw.filter(sel => typeof sel === "string" && sel.trim().length > 0);
+  }
+
+  function videoMatchesHintSelector(video, selector) {
+    if (!(video instanceof HTMLVideoElement) || !selector) return false;
+
+    try {
+      if (video.matches(selector)) return true;
+
+      const container = getPlayerContainer(video);
+      if (!container) return false;
+
+      if (container.matches(selector)) return true;
+
+      const matchedInContainer = container.querySelector(selector);
+      if (!matchedInContainer) return false;
+
+      return (
+        matchedInContainer === video ||
+        matchedInContainer.contains(video) ||
+        video.contains(matchedInContainer)
+      );
+    } catch {
+      return false;
+    }
+  }
+
+  function videoMatchesAnyHintSelector(video, selectors) {
+    if (!(video instanceof HTMLVideoElement) || !selectors.length) return false;
+    return selectors.some(sel => videoMatchesHintSelector(video, sel));
+  }
+
+  function isHintPreferredVideo(video) {
+    const hint = getHintForCurrentDomain();
+    const preferred = getHintSelectorList(hint, "preferredVideoSelectors");
+    return videoMatchesAnyHintSelector(video, preferred);
+  }
+
+  function isHintBlockedVideo(video) {
+    const hint = getHintForCurrentDomain();
+    const blockedVideo = getHintSelectorList(hint, "blockedVideoSelectors");
+    const blockedContainers = getHintSelectorList(hint, "blockedContainerSelectors");
+    return (
+      videoMatchesAnyHintSelector(video, blockedVideo) ||
+      videoMatchesAnyHintSelector(video, blockedContainers)
+    );
   }
 
   function getVideoArea(video) {
@@ -1034,6 +1308,8 @@ if (window.__bambiLoaded) {
   function isLikelyPreviewOrAd(video) {
     if (!(video instanceof HTMLVideoElement)) return true;
 
+    if (isHintBlockedVideo(video)) return true;
+
     const rect = video.getBoundingClientRect();
     const src = (video.currentSrc || video.src || "").toLowerCase();
     const cls = String(video.className || "").toLowerCase();
@@ -1042,6 +1318,7 @@ if (window.__bambiLoaded) {
 
     if (rect.width < 300 || rect.height < 170) return true;
     if (video.muted && video.loop && !video.controls) return true;
+  if (isHintPreferredVideo(video)) return false;
 
     // Known ad-serving network domains in the src URL
     if (/(2mdn\.net|doubleclick\.net|googleadservices\.com|imasdk\.googleapis\.com|\.adnxs\.com|rubiconproject\.com|\.pubmatic\.com)/.test(src)) return true;
@@ -1164,6 +1441,7 @@ if (window.__bambiLoaded) {
       if (sent) {
         console.log("[Bambi] ✓ Video sent to VLC (manual mode)");
         videoAlreadySent = true;
+        cancelAutoPlayFallback();
         return;
       }
     }
@@ -1195,6 +1473,12 @@ if (window.__bambiLoaded) {
       }
       const result = startPlayerLearningMode(msg.domain || "");
       sendResponse(result);
+      return true;
+    }
+
+    if (msg.type === "BAMBI_FORCE_REFRESH_CONFIG") {
+      if (window.top !== window.self) return false;
+      refreshRemoteDomainAssociations(true).then(() => sendResponse({ ok: true }));
       return true;
     }
   });
@@ -1296,6 +1580,7 @@ if (window.__bambiLoaded) {
       if (sent) {
         console.log("[Bambi] ✓ Video sent to VLC");
         videoAlreadySent = true;
+        cancelAutoPlayFallback();
         v.pause();
         v.autoplay = false;
         return;
@@ -1461,6 +1746,7 @@ if (window.__bambiLoaded) {
       if (!isMainSiteVideo(target)) return;
 
       console.log("[Bambi] main video ended → exiting fullscreen");
+      cancelAutoPlayFallback();
 
       if (document.fullscreenElement) {
         document.exitFullscreen().catch(err =>
@@ -1489,9 +1775,19 @@ if (window.__bambiLoaded) {
       bambiDomainAssocMap: {},
       bambiDomainAssocMapFetchedAt: 0,
       bambiPresets: [],
+      bambiAdDomains: [],
+      bambiRemotePlayerHints: {},
+      bambiConfigStale: false,
+      bambiConfigVersion: null,
       bambiIntentWindowMs: DEFAULT_INTENT_WINDOW_MS,
       bambiManualShortcutEnabled: false,
       bambiManualShortcut: DEFAULT_MANUAL_SHORTCUT,
+      bambiInputLockEnabled: false,
+      bambiInputLockDurationMs: 3600000,
+      bambiInputLockLockedUntil: 0,
+      bambiAutoPlayEnabled: false,
+      bambiAutoPlayUrl: "",
+      bambiAutoPlayDelayMs: 600000,
     },
     async (data) => {
       bambiActivated  = Boolean(data.bambiActivated);
@@ -1504,8 +1800,23 @@ if (window.__bambiLoaded) {
       bambiDomainAssocMap = normalizeAssociatedDomainMap(data.bambiDomainAssocMap || {});
       bambiDomainAssocMapFetchedAt = Number(data.bambiDomainAssocMapFetchedAt) || 0;
       bambiPresets = Array.isArray(data.bambiPresets) ? data.bambiPresets : [];
+      bambiAdDomains = Array.isArray(data.bambiAdDomains) ? data.bambiAdDomains.map(d => String(d).toLowerCase()) : [];
+      bambiRemotePlayerHints = (data.bambiRemotePlayerHints && typeof data.bambiRemotePlayerHints === "object") ? data.bambiRemotePlayerHints : {};
+      bambiConfigStale = Boolean(data.bambiConfigStale);
+      bambiConfigVersion = data.bambiConfigVersion ?? null;
       manualShortcutEnabled = Boolean(data.bambiManualShortcutEnabled);
       manualShortcut = normalizeShortcutString(data.bambiManualShortcut || DEFAULT_MANUAL_SHORTCUT);
+      bambiInputLockEnabled = Boolean(data.bambiInputLockEnabled);
+      bambiInputLockDurationMs = Number(data.bambiInputLockDurationMs) || 3600000;
+      bambiInputLockLockedUntil = Number(data.bambiInputLockLockedUntil) || 0;
+      if (bambiInputLockLockedUntil && !isInputLockLockdownActive()) {
+        bambiInputLockLockedUntil = 0;
+        chrome.storage.local.set({ bambiInputLockLockedUntil: 0 });
+      }
+      enforceInputLockState("init");
+      bambiAutoPlayEnabled = Boolean(data.bambiAutoPlayEnabled);
+      bambiAutoPlayUrl = String(data.bambiAutoPlayUrl || "");
+      bambiAutoPlayDelayMs = Number(data.bambiAutoPlayDelayMs) || 600000;
       userIntentWindowMs = Number.isFinite(Number(data.bambiIntentWindowMs))
         ? Number(data.bambiIntentWindowMs)
         : DEFAULT_INTENT_WINDOW_MS;
@@ -1516,6 +1827,8 @@ if (window.__bambiLoaded) {
       domainMode = determineDomainMode(hostname);
 
       refreshRemoteDomainAssociations(false);
+
+      if (bambiAutoPlayEnabled) scheduleAutoPlayFallback();
 
       console.log(
         "[Bambi] init → activated:", bambiActivated,

@@ -91,6 +91,24 @@
       font-size: 0.86rem;
       color: #eec8ee;
     }
+    .toggle-label-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .state-badge {
+      display: none;
+      font-size: 0.6rem;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      border-radius: 10px;
+      padding: 2px 7px;
+      border: 1px solid #6a307a;
+      color: #f0b8ff;
+      background: rgba(110, 26, 133, 0.35);
+      white-space: nowrap;
+    }
     .switch {
       position: relative;
       width: 50px;
@@ -364,6 +382,72 @@
       text-align: center;
     }
 
+    .config-info {
+      background: #160a18;
+      border: 1px solid #2a0e2a;
+      border-radius: 6px;
+      padding: 7px 10px;
+    }
+    .config-info-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 4px;
+    }
+    .config-version {
+      font-size: 0.72rem;
+      color: #a060c0;
+      font-weight: 600;
+    }
+    .config-stale {
+      font-size: 0.64rem;
+      color: #ff9800;
+      background: rgba(255,152,0,0.15);
+      border: 1px solid #ff9800;
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-weight: 600;
+    }
+    .config-detail {
+      font-size: 0.68rem;
+      color: #6a3a7a;
+      line-height: 1.5;
+    }
+    .config-refresh-btn {
+      margin-left: auto;
+      background: #2a0a35;
+      border: 1px solid #5a2a70;
+      color: #b070d0;
+      border-radius: 4px;
+      padding: 2px 7px;
+      font-size: 0.7rem;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .config-refresh-btn:hover { background: #4a0a60; color: #e090ff; }
+    .config-refresh-btn:disabled { opacity: 0.5; cursor: default; }
+    .update-status {
+      font-size: 0.68rem;
+      color: #7a4a8a;
+      margin-top: 4px;
+      line-height: 1.4;
+    }
+    .update-status.has-update {
+      color: #ffd080;
+    }
+    .update-link-btn {
+      margin-top: 6px;
+      width: 100%;
+      background: #2a0a35;
+      border: 1px solid #6a2a80;
+      color: #d8a0ef;
+      border-radius: 5px;
+      padding: 4px 8px;
+      font-size: 0.72rem;
+      cursor: pointer;
+    }
+    .update-link-btn:hover { background: #4a0a60; color: #f0b8ff; }
+
     .credit {
       padding: 7px 12px;
       text-align: center;
@@ -381,7 +465,7 @@
 <body>
   <div class="header">
     <span class="header-title">&#x1F430; BambiBrowser+</span>
-    <span class="header-ver">v5.1</span>
+    <span class="header-ver" id="headerVersion">v5.21</span>
     <button class="help-btn" id="helpBtn" title="Open user guide">?</button>
   </div>
 
@@ -414,6 +498,32 @@
             <span class="slider"></span>
           </label>
         </div>
+        <div class="toggle-row" style="margin-top:10px">
+          <span class="toggle-label-wrap">
+            <span class="toggle-label">Input lock (single-monitor)</span>
+            <span id="inputLockReasonBadge" class="state-badge"></span>
+          </span>
+          <label class="switch">
+            <input type="checkbox" id="inputLockToggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="setting-row" id="inputLockTimerRow" style="display:none">
+          <label for="inputLockDurationSelect" class="setting-label">Lockdown duration</label>
+          <select id="inputLockDurationSelect" class="setting-select">
+            <option value="600000">10 minutes</option>
+            <option value="1200000">20 minutes</option>
+            <option value="3600000">1 hour</option>
+            <option value="7200000">2 hours</option>
+            <option value="14400000">4 hours</option>
+            <option value="21600000">6 hours</option>
+            <option value="28800000">8 hours</option>
+            <option value="43200000">12 hours</option>
+          </select>
+          <button class="add-btn" id="inputLockLockdownBtn" style="margin-top:2px">Start Lockdown</button>
+          <div class="setting-help" id="inputLockLockdownStatus">Lockdown inactive.</div>
+          <div class="setting-help">During lockdown, input lock cannot be disabled. Multi-monitor always forces input lock on.</div>
+        </div>
         <div class="setting-row">
           <label for="intentWindowSelect" class="setting-label">Manual mode click sensitivity</label>
           <select id="intentWindowSelect" class="setting-select">
@@ -422,6 +532,50 @@
             <option value="3200">Relaxed (more forgiving)</option>
           </select>
           <div class="setting-help">Used on custom domains to match click intent with video play events.</div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Remote Config</div>
+        <div class="config-info">
+          <div class="config-info-row">
+            <span class="config-version" id="configVersion">v—</span>
+            <span class="config-stale" id="configStale" style="display:none">Stale</span>
+            <button class="config-refresh-btn" id="refreshConfigBtn">&#8635; Sync</button>
+          </div>
+          <div class="config-detail" id="configDetail">Loading&#8230;</div>
+          <div class="update-status" id="updateStatus">Checking extension updates&#8230;</div>
+          <button class="update-link-btn" id="openUpdateBtn" style="display:none">Open update page</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Auto-Play Fallback</div>
+        <div class="toggle-row">
+          <span class="toggle-label">Open URL if no video found</span>
+          <label class="switch">
+            <input type="checkbox" id="autoPlayToggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div id="autoPlaySettings" style="display:none">
+          <div class="setting-row">
+            <label for="autoPlayUrlInput" class="setting-label">Fallback URL</label>
+            <input type="text" id="autoPlayUrlInput" class="add-input" placeholder="https://..." style="margin-top:2px">
+          </div>
+          <div class="setting-row">
+            <label for="autoPlayDelaySelect" class="setting-label">Open after idle for</label>
+            <select id="autoPlayDelaySelect" class="setting-select">
+              <option value="300000">5 minutes</option>
+              <option value="600000">10 minutes</option>
+              <option value="900000">15 minutes</option>
+              <option value="1200000">20 minutes</option>
+              <option value="1800000">30 minutes</option>
+              <option value="2700000">45 minutes</option>
+              <option value="3600000">1 hour</option>
+            </select>
+            <div class="setting-help">Opens in a new tab if Bambi Mode is active but no video has been sent to VLC.</div>
+          </div>
         </div>
       </div>
 

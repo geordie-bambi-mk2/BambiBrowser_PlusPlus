@@ -1,7 +1,10 @@
 {
   "manifest_version": 3,
   "name": "BambiBrowser+",
-  "version": "5.1",
+  "version": "5.21",
+  "background": {
+    "service_worker": "background.js"
+  },
   "description": "Automatic fullscreen video hijack — configurable domains + blacklist",
   "permissions": ["storage", "tabs"],
   "host_permissions": ["<all_urls>"],
