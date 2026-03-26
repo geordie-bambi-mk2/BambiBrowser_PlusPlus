@@ -14,6 +14,7 @@ if (window.__bambiLoaded) {
   // ------------------------------------------------------
   const BAMBI_SERVER = "http://127.0.0.1:5655";
   const BAMBI_ENDPOINT = BAMBI_SERVER + "/play";
+  const BAMBI_STATUS_ENDPOINT = BAMBI_SERVER + "/status";
   const DEFAULT_DOMAINS = ["hypnotube.com"];
   const AUTO_MODE_DOMAINS = ["hypnotube.com"]; // Domains that use auto-play, not manual
   const DEFAULT_INTENT_WINDOW_MS = 2200;
@@ -23,6 +24,121 @@ if (window.__bambiLoaded) {
   const MANUAL_PREROLL_GRACE_DOMAINS = ["pornhub.com"];
   const REMOTE_DOMAIN_MAP_URL = "https://geordie-bambi-mk2.github.io/bbrowser-resources/config.json";
   const REMOTE_DOMAIN_MAP_REFRESH_MS = 6 * 60 * 60 * 1000;
+  const DEFAULT_VLC_ACTIVE_PLAYBACK_MS = 15 * 60 * 1000;
+  const VLC_ACTIVE_PLAYBACK_GRACE_MS = 2 * 60 * 1000;
+  const MAX_VLC_ACTIVE_PLAYBACK_MS = 4 * 60 * 60 * 1000;
+
+  function isExtensionContextValid() {
+    try {
+      return typeof chrome !== "undefined" && Boolean(chrome.runtime && chrome.runtime.id);
+    } catch {
+      return false;
+    }
+  }
+
+  function safeRuntimeSendMessage(message) {
+    if (!isExtensionContextValid()) return false;
+    try {
+      chrome.runtime.sendMessage(message);
+      return true;
+    } catch (e) {
+      const msg = String(e?.message || e || "");
+      if (/extension context invalidated/i.test(msg)) {
+        return false;
+      }
+      console.warn("[Bambi] sendMessage failed:", e);
+      return false;
+    }
+  }
+
+  function safeStorageSet(value) {
+    if (!isExtensionContextValid()) return false;
+    try {
+      chrome.storage.local.set(value);
+      return true;
+    } catch (e) {
+      const msg = String(e?.message || e || "");
+      if (/extension context invalidated/i.test(msg)) {
+        return false;
+      }
+      console.warn("[Bambi] storage.set failed:", e);
+      return false;
+    }
+  }
+
+  function clampLikelyVlcPlaybackMs(value) {
+    const ms = Number(value);
+    if (!Number.isFinite(ms) || ms <= 0) return DEFAULT_VLC_ACTIVE_PLAYBACK_MS;
+    return Math.max(60 * 1000, Math.min(ms, MAX_VLC_ACTIVE_PLAYBACK_MS));
+  }
+
+  function estimateLikelyVlcPlaybackMs(videoEl) {
+    if (!(videoEl instanceof HTMLVideoElement)) return DEFAULT_VLC_ACTIVE_PLAYBACK_MS;
+
+    const duration = Number(videoEl.duration);
+    const currentTime = Number(videoEl.currentTime);
+    if (Number.isFinite(duration) && duration > 0) {
+      const remainingSeconds = Math.max(duration - (Number.isFinite(currentTime) ? currentTime : 0), 0);
+      return clampLikelyVlcPlaybackMs((remainingSeconds * 1000) + VLC_ACTIVE_PLAYBACK_GRACE_MS);
+    }
+
+    return DEFAULT_VLC_ACTIVE_PLAYBACK_MS;
+  }
+
+  function markLikelyVlcPlaybackActive(durationMs, source = "page-video") {
+    const startedAt = Date.now();
+    const activeMs = clampLikelyVlcPlaybackMs(durationMs);
+    safeStorageSet({
+      bambiVlcPlaybackStartedAt: startedAt,
+      bambiVlcPlaybackUntil: startedAt + activeMs,
+      bambiVlcPlaybackSource: source,
+    });
+  }
+
+  function getLikelyVlcPlaybackState() {
+    if (!isExtensionContextValid()) {
+      return Promise.resolve({ active: false, until: 0 });
+    }
+
+    return new Promise((resolve) => {
+      chrome.storage.local.get({ bambiVlcPlaybackUntil: 0 }, (data) => {
+        const until = Number(data.bambiVlcPlaybackUntil) || 0;
+        resolve({ active: until > Date.now(), until });
+      });
+    });
+  }
+
+  async function getLiveVlcPlaybackState() {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 1200);
+    try {
+      const response = await fetch(BAMBI_STATUS_ENDPOINT, {
+        method: "GET",
+        cache: "no-store",
+        signal: controller.signal,
+      });
+      if (!response.ok) return { active: false, until: 0 };
+      const payload = await response.json();
+      if (!payload?.playing) return { active: false, until: 0 };
+
+      const remainingSec = Number(payload.remaining_sec);
+      const activeMs = Number.isFinite(remainingSec) && remainingSec >= 0
+        ? Math.max(60 * 1000, Math.floor((remainingSec * 1000) + 2000))
+        : DEFAULT_VLC_ACTIVE_PLAYBACK_MS;
+      markLikelyVlcPlaybackActive(activeMs, "live-status");
+      return { active: true, until: Date.now() + activeMs };
+    } catch {
+      return { active: false, until: 0 };
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  async function getVlcPlaybackState() {
+    const live = await getLiveVlcPlaybackState();
+    if (live.active) return live;
+    return getLikelyVlcPlaybackState();
+  }
 
   function normalizeDomainInput(value) {
     if (!value) return "";
@@ -258,18 +374,18 @@ if (window.__bambiLoaded) {
     let json = null;
     let usedCache = false;
 
-    try {
-      const response = await fetch(REMOTE_DOMAIN_MAP_URL, { cache: "no-store" });
-      if (response.ok) {
-        const candidate = await response.json();
-        if (validateRemoteConfig(candidate)) {
-          json = candidate;
-          // Persist as last-known-good
-          chrome.storage.local.set({ bambiLastGoodConfig: json, bambiLastGoodConfigAt: now });
-        } else {
-          console.log("[Bambi] remote config failed schema validation — falling back to last-known-good");
+      try {
+        const response = await fetch(REMOTE_DOMAIN_MAP_URL, { cache: "no-store" });
+        if (response.ok) {
+          const candidate = await response.json();
+          if (validateRemoteConfig(candidate)) {
+            json = candidate;
+            // Persist as last-known-good
+            safeStorageSet({ bambiLastGoodConfig: json, bambiLastGoodConfigAt: now });
+          } else {
+            console.log("[Bambi] remote config failed schema validation — falling back to last-known-good");
+          }
         }
-      }
     } catch (e) {
       console.log("[Bambi] remote config fetch failed:", e.message);
     }
@@ -339,7 +455,7 @@ if (window.__bambiLoaded) {
       bambiDomainAssocMapFetchedAt = now;
     }
 
-    chrome.storage.local.set({
+      safeStorageSet({
       bambiDomainAssocMap: normalizedMap,
       bambiDomainAssocMapFetchedAt: usedCache ? bambiDomainAssocMapFetchedAt : now,
       bambiPresets: rawPresets,
@@ -378,6 +494,9 @@ if (window.__bambiLoaded) {
 
   function isPrerollGraceDomain() {
     return MANUAL_PREROLL_GRACE_DOMAINS.some(d => hostMatchesDomain(hostname, d));
+  }
+  function shouldTreatShortVideosAsAds() {
+    return isPrerollGraceDomain();
   }
 
   function getHintForCurrentDomain() {
@@ -453,7 +572,6 @@ if (window.__bambiLoaded) {
     if (changes.bambiMultiMonitor) {
       bambiMultiMonitor = Boolean(changes.bambiMultiMonitor.newValue);
       console.log("[Bambi] storage change → multi-monitor:", bambiMultiMonitor);
-      enforceInputLockState("multi-monitor-change");
     }
     if (changes.bambiDomainPlayerHints) {
       bambiDomainPlayerHints = changes.bambiDomainPlayerHints.newValue || {};
@@ -504,13 +622,7 @@ if (window.__bambiLoaded) {
       bambiConfigVersion = changes.bambiConfigVersion.newValue ?? null;
     }
     if (changes.bambiInputLockEnabled !== undefined) {
-      const nextInputLockEnabled = Boolean(changes.bambiInputLockEnabled.newValue);
-      if ((bambiMultiMonitor || isInputLockLockdownActive()) && !nextInputLockEnabled) {
-        bambiInputLockEnabled = true;
-        chrome.storage.local.set({ bambiInputLockEnabled: true });
-      } else {
-        bambiInputLockEnabled = nextInputLockEnabled;
-      }
+      bambiInputLockEnabled = Boolean(changes.bambiInputLockEnabled.newValue);
     }
     if (changes.bambiInputLockDurationMs !== undefined) {
       bambiInputLockDurationMs = Number(changes.bambiInputLockDurationMs.newValue) || 3600000;
@@ -519,7 +631,7 @@ if (window.__bambiLoaded) {
       bambiInputLockLockedUntil = Number(changes.bambiInputLockLockedUntil.newValue) || 0;
       if (bambiInputLockLockedUntil && !isInputLockLockdownActive()) {
         bambiInputLockLockedUntil = 0;
-        chrome.storage.local.set({ bambiInputLockLockedUntil: 0 });
+        safeStorageSet({ bambiInputLockLockedUntil: 0 });
       }
       enforceInputLockState("lockdown-until-change");
     }
@@ -557,6 +669,7 @@ if (window.__bambiLoaded) {
         body: JSON.stringify({
           url: videoUrl,
           multi_monitor: bambiMultiMonitor,
+          input_lock: bambiInputLockEnabled || isInputLockLockdownActive(),
         })
       });
       return response.ok;
@@ -857,6 +970,7 @@ if (window.__bambiLoaded) {
         const sent = await sendVideoToServer(pickedUrl);
         if (sent) {
           console.log("[Bambi] ✓ Manual trigger sent video to VLC");
+          markLikelyVlcPlaybackActive(estimateLikelyVlcPlaybackMs(pickedVideo), "manual-trigger");
           videoAlreadySent = true;
           cancelAutoPlayFallback();
           removeManualTriggerOverlay();
@@ -982,7 +1096,7 @@ if (window.__bambiLoaded) {
           containerSelector,
           learnedAt: Date.now(),
         };
-        chrome.storage.local.set({ bambiDomainPlayerHints: nextHints });
+        safeStorageSet({ bambiDomainPlayerHints: nextHints });
       });
 
       console.log("[Bambi] learned player container for", learnDomain, "→", containerSelector);
@@ -1002,16 +1116,16 @@ if (window.__bambiLoaded) {
 
   function enforceInputLockState(reason = "") {
     const lockdownActive = isInputLockLockdownActive();
-    const shouldForceEnable = bambiMultiMonitor || lockdownActive;
+    const shouldForceEnable = lockdownActive;
 
     if (bambiInputLockLockedUntil && !lockdownActive) {
       bambiInputLockLockedUntil = 0;
-      chrome.storage.local.set({ bambiInputLockLockedUntil: 0 });
+      safeStorageSet({ bambiInputLockLockedUntil: 0 });
     }
 
     if (shouldForceEnable && !bambiInputLockEnabled) {
       bambiInputLockEnabled = true;
-      chrome.storage.local.set({ bambiInputLockEnabled: true });
+      safeStorageSet({ bambiInputLockEnabled: true });
       console.log("[Bambi] forcing input lock on:", reason || "state-enforcement");
     }
   }
@@ -1019,18 +1133,30 @@ if (window.__bambiLoaded) {
   // ------------------------------------------------------
   // AUTO-PLAY FALLBACK HELPERS
   // ------------------------------------------------------
-  function scheduleAutoPlayFallback() {
+  function scheduleAutoPlayFallback(delayOverrideMs = null) {
     cancelAutoPlayFallback();
     if (!bambiAutoPlayEnabled || !bambiAutoPlayUrl || !bambiAutoPlayDelayMs) return;
     if (!isBambiActivated()) return;
-    autoPlayFallbackTimerId = setTimeout(() => {
+    const delayMs = Math.max(1000, Number(delayOverrideMs) || bambiAutoPlayDelayMs);
+    autoPlayFallbackTimerId = setTimeout(async () => {
       autoPlayFallbackTimerId = null;
+      const playbackState = await getVlcPlaybackState();
+      if (playbackState.active) {
+        const remainingMs = Math.max(1000, playbackState.until - Date.now());
+        console.log("[Bambi] auto-play fallback suppressed while VLC session is likely active for another", Math.ceil(remainingMs / 1000), "s");
+        scheduleAutoPlayFallback(Math.min(bambiAutoPlayDelayMs, remainingMs + 1000));
+        return;
+      }
       if (!videoAlreadySent && bambiAutoPlayUrl && /^https?:\/\/.+/.test(bambiAutoPlayUrl)) {
         console.log("[Bambi] auto-play fallback → opening:", bambiAutoPlayUrl);
-        chrome.runtime.sendMessage({ type: "BAMBI_OPEN_TAB", url: bambiAutoPlayUrl });
+        const sent = safeRuntimeSendMessage({ type: "BAMBI_OPEN_TAB", url: bambiAutoPlayUrl });
+        if (!sent) {
+          console.log("[Bambi] runtime unavailable, stopping local fallback timer");
+          return;
+        }
         scheduleAutoPlayFallback(); // reschedule for next cycle
       }
-    }, bambiAutoPlayDelayMs);
+    }, delayMs);
   }
 
   function cancelAutoPlayFallback() {
@@ -1046,7 +1172,7 @@ if (window.__bambiLoaded) {
     console.log("[Bambi] fullscreenchange →", !!document.fullscreenElement);
     if (document.fullscreenElement && bambiInducedFullscreen) {
       enforceInputLockState("fullscreen-enter");
-      const shouldLock = bambiMultiMonitor || bambiInputLockEnabled || isInputLockLockdownActive();
+      const shouldLock = bambiInputLockEnabled || isInputLockLockdownActive();
       if (shouldLock) {
         enableKeyboardLock();
         enablePointerLock();
@@ -1155,8 +1281,9 @@ if (window.__bambiLoaded) {
       const ariaLabel = (video.getAttribute("aria-label") || "").toLowerCase();
       if (/\bad\b|advertisement/.test(ariaLabel)) return true;
 
-      // Very short duration strongly indicates a preroll ad; real content is nearly always > 60 s
-      if (Number.isFinite(video.duration) && video.duration > 0 && video.duration < 31) return true;
+      // Only apply the short-duration preroll rule on domains where we know
+      // brief ad videos are common. Short HypnoTube clips are legitimate content.
+      if (shouldTreatShortVideosAsAds() && Number.isFinite(video.duration) && video.duration > 0 && video.duration < 31) return true;
 
       const adLike = /(ad-|ads|advert|promo|preroll|outstream|vast|preview|thumbnail|thumb|teaser|dfp|imasdk|adunit|interstitial)/.test(
         `${src} ${cls} ${id} ${parentMeta}`
@@ -1227,9 +1354,9 @@ if (window.__bambiLoaded) {
         if (!video.paused) total += 40000;
         if (isHintPreferredVideo(video)) total += 80000;
         if (isHintBlockedVideo(video)) total -= 120000;
-        // Favour clearly content-length videos; penalise suspiciously short ones (likely preroll ads)
+        // Favour clearly content-length videos; only penalise short clips on preroll-heavy domains.
         if (Number.isFinite(video.duration) && video.duration > 60) total += 30000;
-        if (Number.isFinite(video.duration) && video.duration > 0 && video.duration < 31) total -= 20000;
+        if (shouldTreatShortVideosAsAds() && Number.isFinite(video.duration) && video.duration > 0 && video.duration < 31) total -= 20000;
         return total;
       }
 
@@ -1318,7 +1445,8 @@ if (window.__bambiLoaded) {
 
     if (rect.width < 300 || rect.height < 170) return true;
     if (video.muted && video.loop && !video.controls) return true;
-  if (isHintPreferredVideo(video)) return false;
+    if (video.muted && video.loop && !video.controls) return true;
+    if (isHintPreferredVideo(video)) return false;
 
     // Known ad-serving network domains in the src URL
     if (/(2mdn\.net|doubleclick\.net|googleadservices\.com|imasdk\.googleapis\.com|\.adnxs\.com|rubiconproject\.com|\.pubmatic\.com)/.test(src)) return true;
@@ -1332,8 +1460,8 @@ if (window.__bambiLoaded) {
     const ariaLabel = (video.getAttribute("aria-label") || "").toLowerCase();
     if (/\bad\b|advertisement/.test(ariaLabel)) return true;
 
-    // Very short duration strongly indicates a preroll ad
-    if (Number.isFinite(video.duration) && video.duration > 0 && video.duration < 31) return true;
+    // Only treat very short videos as ad-like on domains with known prerolls.
+    if (shouldTreatShortVideosAsAds() && Number.isFinite(video.duration) && video.duration > 0 && video.duration < 31) return true;
 
     if (/(preview|thumbnail|thumb|ad-|ads|promo|teaser|preroll|outstream|dfp|imasdk|adunit|interstitial)/.test(meta) && getVideoArea(video) < 500000) {
       return true;
@@ -1409,7 +1537,7 @@ if (window.__bambiLoaded) {
             .filter(Boolean);
           if (!updated.includes(selectedDomain)) {
             updated.push(selectedDomain);
-            chrome.storage.local.set({ bambiDomains: updated });
+            safeStorageSet({ bambiDomains: updated });
             console.log("[Bambi] added domain:", selectedDomain);
           }
         });
@@ -1422,7 +1550,7 @@ if (window.__bambiLoaded) {
             .filter(Boolean);
           if (!updated.includes(selectedDomain)) {
             updated.push(selectedDomain);
-            chrome.storage.local.set({ bambiBlacklist: updated });
+            safeStorageSet({ bambiBlacklist: updated });
             console.log("[Bambi] blacklisted domain:", selectedDomain);
           }
         });
@@ -1440,6 +1568,7 @@ if (window.__bambiLoaded) {
       const sent = await sendVideoToServer(videoUrl);
       if (sent) {
         console.log("[Bambi] ✓ Video sent to VLC (manual mode)");
+        markLikelyVlcPlaybackActive(estimateLikelyVlcPlaybackMs(videoElement), "manual-mode");
         videoAlreadySent = true;
         cancelAutoPlayFallback();
         return;
@@ -1579,6 +1708,7 @@ if (window.__bambiLoaded) {
       const sent = await sendVideoToServer(videoSrc);
       if (sent) {
         console.log("[Bambi] ✓ Video sent to VLC");
+        markLikelyVlcPlaybackActive(estimateLikelyVlcPlaybackMs(v), "auto-mode");
         videoAlreadySent = true;
         cancelAutoPlayFallback();
         v.pause();
@@ -1788,6 +1918,7 @@ if (window.__bambiLoaded) {
       bambiAutoPlayEnabled: false,
       bambiAutoPlayUrl: "",
       bambiAutoPlayDelayMs: 600000,
+      bambiVlcPlaybackUntil: 0,
     },
     async (data) => {
       bambiActivated  = Boolean(data.bambiActivated);
@@ -1811,7 +1942,7 @@ if (window.__bambiLoaded) {
       bambiInputLockLockedUntil = Number(data.bambiInputLockLockedUntil) || 0;
       if (bambiInputLockLockedUntil && !isInputLockLockdownActive()) {
         bambiInputLockLockedUntil = 0;
-        chrome.storage.local.set({ bambiInputLockLockedUntil: 0 });
+        safeStorageSet({ bambiInputLockLockedUntil: 0 });
       }
       enforceInputLockState("init");
       bambiAutoPlayEnabled = Boolean(data.bambiAutoPlayEnabled);

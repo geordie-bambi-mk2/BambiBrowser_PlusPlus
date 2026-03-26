@@ -1,0 +1,833 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      width: 100%;
+      max-width: none;
+      min-height: 100vh;
+      font-family: 'Segoe UI', Tahoma, sans-serif;
+      background:
+        radial-gradient(1200px 520px at 100% -20%, rgba(212, 94, 255, 0.12), transparent 55%),
+        radial-gradient(900px 420px at 0% -10%, rgba(130, 45, 190, 0.16), transparent 58%),
+        #120812;
+      color: #eec8ee;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #3d0a3d, #5a1060);
+      padding: 14px clamp(14px, 3vw, 34px);
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid #6d1f83;
+    }
+    .header-title {
+      font-size: 1.02rem;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      color: #ff9bff;
+    }
+    .header-ver {
+      margin-left: auto;
+      font-size: 0.68rem;
+      color: #bb7fc9;
+    }
+
+    .tabs {
+      width: 100%;
+      max-width: 1400px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 10px;
+      padding: 14px clamp(14px, 3vw, 34px) 12px;
+      border-bottom: 1px solid #2a0e2a;
+      background: #130813;
+    }
+    .tab-btn {
+      border: 1px solid #4a1b55;
+      border-radius: 9px;
+      background: #1c0b1f;
+      color: #cfa4d8;
+      font-size: 0.84rem;
+      font-weight: 600;
+      letter-spacing: 0.35px;
+      padding: 10px 8px;
+      cursor: pointer;
+      transition: background 0.2s, color 0.2s, border-color 0.2s;
+    }
+    .tab-btn:hover { background: #26102a; color: #edbdf5; }
+    .tab-btn.active {
+      background: #6e1a85;
+      color: #ffd8ff;
+      border-color: #b73ad8;
+    }
+
+    .tab-panels {
+      width: 100%;
+      max-width: 1400px;
+      margin: 0 auto;
+      padding: 18px clamp(14px, 3vw, 34px) 26px;
+      min-height: calc(100vh - 190px);
+      overflow: visible;
+    }
+    .tab-pane { display: none; }
+    .tab-pane.active {
+      display: grid;
+      gap: 14px;
+      align-content: start;
+    }
+
+    #tab-general.tab-pane.active {
+      grid-template-columns: 1.1fr 1fr;
+      grid-auto-flow: row;
+    }
+    #tab-general .section:nth-child(1),
+    #tab-general .section:nth-child(2) {
+      grid-column: 1;
+    }
+    #tab-general .section:nth-child(3),
+    #tab-general .section:nth-child(4) {
+      grid-column: 2;
+    }
+
+    #tab-domains.tab-pane.active,
+    #tab-manual.tab-pane.active {
+      grid-template-columns: 1fr 1fr;
+    }
+
+    #tab-domains.tab-pane.active {
+      align-items: stretch;
+    }
+
+    #tab-domains .section {
+      display: flex;
+      flex-direction: column;
+      min-height: calc(100vh - 285px);
+    }
+
+    #tab-domains #presetList,
+    #tab-domains #domainList {
+      flex: 1;
+      min-height: 0;
+      max-height: none !important;
+      overflow-y: auto;
+    }
+
+    #tab-domains .add-row {
+      margin-top: 10px;
+    }
+
+    #tab-manual.tab-pane.active {
+      align-items: stretch;
+    }
+
+    #tab-manual .section {
+      display: flex;
+      flex-direction: column;
+      min-height: calc(100vh - 285px);
+    }
+
+    #tab-blacklist .section {
+      display: flex;
+      flex-direction: column;
+      min-height: calc(100vh - 285px);
+    }
+
+    #tab-blacklist #blacklistList {
+      flex: 1;
+      min-height: 0;
+      max-height: none !important;
+      overflow-y: auto;
+    }
+
+    #tab-blacklist .add-row {
+      margin-top: 10px;
+    }
+
+    #tab-blacklist.tab-pane.active {
+      grid-template-columns: minmax(420px, 900px);
+      justify-content: center;
+    }
+
+    .section {
+      padding: 16px;
+      border: 1px solid #33143a;
+      border-radius: 12px;
+      background: #1b0c20;
+      box-shadow: inset 0 1px 0 rgba(255, 160, 255, 0.06);
+    }
+
+    .section-title {
+      font-size: 0.72rem;
+      text-transform: uppercase;
+      letter-spacing: 1.1px;
+      color: #b171c3;
+      margin-bottom: 12px;
+    }
+
+    .toggle-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .toggle-label {
+      font-size: 0.96rem;
+      color: #eec8ee;
+    }
+    .toggle-label-wrap {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .state-badge {
+      display: none;
+      font-size: 0.6rem;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      border-radius: 10px;
+      padding: 2px 7px;
+      border: 1px solid #6a307a;
+      color: #f0b8ff;
+      background: rgba(110, 26, 133, 0.35);
+      white-space: nowrap;
+    }
+    .switch {
+      position: relative;
+      width: 54px;
+      height: 29px;
+    }
+    .switch input { display: none; }
+    .slider {
+      position: absolute;
+      inset: 0;
+      background: #3a183a;
+      border-radius: 26px;
+      cursor: pointer;
+      transition: background 0.25s;
+      border: 1px solid #5a2a5a;
+    }
+    .slider::before {
+      content: '';
+      position: absolute;
+      width: 22px;
+      height: 22px;
+      left: 3px;
+      top: 2px;
+      background: #7a3a7a;
+      border-radius: 50%;
+      transition: transform 0.25s, background 0.25s;
+    }
+    input:checked + .slider {
+      background: #8010a0;
+      border-color: #cc40cc;
+    }
+    input:checked + .slider::before {
+      transform: translateX(25px);
+      background: #ff80ff;
+    }
+
+    .setting-row {
+      margin-top: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .setting-label {
+      font-size: 0.88rem;
+      color: #c892d4;
+    }
+    .setting-select {
+      width: 100%;
+      background: #1e0a1e;
+      border: 1px solid #4a2050;
+      border-radius: 8px;
+      padding: 9px 11px;
+      color: #eec8ee;
+      font-size: 0.9rem;
+      outline: none;
+    }
+    .setting-select:focus { border-color: #a020c0; }
+    .setting-help {
+      font-size: 0.76rem;
+      color: #7e4f88;
+      line-height: 1.3;
+    }
+
+    .domain-list {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+      margin-bottom: 9px;
+      max-height: 420px;
+      overflow-y: auto;
+    }
+    .domain-list::-webkit-scrollbar { width: 4px; }
+    .domain-list::-webkit-scrollbar-thumb { background: #4a1a4a; border-radius: 4px; }
+
+    .domain-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #1e0a1e;
+      border-radius: 8px;
+      padding: 9px 12px;
+      border: 1px solid #3e183e;
+      gap: 8px;
+    }
+    .domain-name {
+      font-size: 0.9rem;
+      color: #dda0dd;
+      word-break: break-all;
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .domain-mode {
+      font-size: 0.63rem;
+      padding: 2px 6px;
+      border-radius: 3px;
+      white-space: nowrap;
+      font-weight: 600;
+      letter-spacing: 0.5px;
+    }
+    .domain-mode.auto {
+      background: rgba(80, 208, 80, 0.2);
+      color: #50d050;
+      border: 1px solid #50d050;
+    }
+    .domain-mode.manual {
+      background: rgba(255, 152, 0, 0.2);
+      color: #ff9800;
+      border: 1px solid #ff9800;
+    }
+    .domain-actions {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      flex-shrink: 0;
+    }
+    .domain-config,
+    .domain-remove {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 0.9rem;
+      line-height: 1;
+      border-radius: 3px;
+      padding: 0 3px;
+      transition: color 0.15s;
+    }
+    .domain-config { color: #8f72d0; }
+    .domain-config:hover { color: #d2a8ff; }
+    .domain-remove { color: #7030a0; }
+    .domain-remove:hover { color: #ff60ff; }
+
+    .add-row {
+      display: flex;
+      gap: 9px;
+    }
+    .add-input {
+      flex: 1;
+      background: #1e0a1e;
+      border: 1px solid #4a2050;
+      border-radius: 8px;
+      padding: 10px 11px;
+      color: #eec8ee;
+      font-size: 0.9rem;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    .add-input:focus { border-color: #a020c0; }
+    .add-input::placeholder { color: #5a2a5a; }
+    .add-btn {
+      background: #5a0a70;
+      border: 1px solid #9030b0;
+      color: #ff80ff;
+      border-radius: 8px;
+      padding: 10px 16px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+    .add-btn:hover { background: #8010a0; }
+
+    .empty-msg {
+      font-size: 0.78rem;
+      color: #5a3060;
+      text-align: center;
+      padding: 8px 0;
+    }
+
+    .bl-title { color: #a04040; }
+    .bl-item  { border-color: #3e1818; background: #1e0a0a; }
+    .bl-item .domain-name   { color: #dda0a0; }
+    .bl-item .domain-remove { color: #703030; }
+    .bl-item .domain-remove:hover { color: #ff6060; }
+    .bl-input:focus { border-color: #c02020; }
+    .bl-add-btn {
+      background: #701010;
+      border-color: #b03030;
+      color: #ff8080;
+    }
+    .bl-add-btn:hover { background: #a01818; }
+
+    .status-wrap {
+      border-top: 1px solid #2e0e2e;
+      border-bottom: 1px solid #1d0a1d;
+      padding: 11px clamp(14px, 3vw, 34px);
+      background: #130813;
+      margin-top: auto;
+    }
+    .status-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 0.76rem;
+      color: #8a61a3;
+      min-height: 1.1em;
+    }
+    #statusText {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: inline-block;
+      max-width: 100%;
+    }
+    .status-dot {
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: #3a1a3a;
+      flex-shrink: 0;
+    }
+    .status-dot.online  { background: #50d050; box-shadow: 0 0 6px #50d050; }
+    .status-dot.offline { background: #cc3030; }
+    .status-playback {
+      height: 1em;
+      margin-top: 4px;
+      font-size: 0.68rem;
+      color: #9f73b8;
+      text-align: center;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .status-progress {
+      margin-top: 5px;
+      height: 6px;
+      width: 100%;
+      background: rgba(255, 155, 255, 0.16);
+      border: 1px solid rgba(255, 155, 255, 0.3);
+      border-radius: 999px;
+      overflow: hidden;
+      opacity: 0;
+      transition: opacity 0.2s ease;
+    }
+    .status-progress.active {
+      opacity: 1;
+    }
+    .status-progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #c55ad6, #ff9bff);
+      transition: width 0.25s ease;
+    }
+
+    .help-btn {
+      background: none;
+      border: 1px solid #5a2a5a;
+      border-radius: 8px;
+      width: 30px;
+      height: 30px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #9450ad;
+      font-size: 0.95rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: border-color 0.18s, color 0.18s, background 0.18s;
+      flex-shrink: 0;
+      line-height: 1;
+      padding: 0;
+    }
+    .help-btn:hover {
+      background: #26102a;
+      border-color: #b73ad8;
+      color: #ff9bff;
+    }
+
+    .preset-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: #160d18;
+      border-radius: 6px;
+      padding: 5px 10px;
+      border: 1px solid #33143a;
+      gap: 8px;
+    }
+    .preset-name {
+      font-size: 0.8rem;
+      color: #c892d4;
+      flex: 1;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .preset-add-btn {
+      background: #2a0a35;
+      border: 1px solid #6030a0;
+      color: #c070f0;
+      border-radius: 5px;
+      padding: 2px 9px;
+      font-size: 0.75rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: background 0.18s;
+      flex-shrink: 0;
+    }
+    .preset-add-btn:hover { background: #5a0a70; }
+    .preset-add-btn:disabled {
+      background: #1a1020;
+      border-color: #2e1a3e;
+      color: #50d050;
+      cursor: default;
+    }
+    .preset-loading {
+      font-size: 0.72rem;
+      color: #5a3060;
+      padding: 4px 0;
+      text-align: center;
+    }
+
+    .config-info {
+      background: #160a18;
+      border: 1px solid #2a0e2a;
+      border-radius: 6px;
+      padding: 7px 10px;
+    }
+    .config-info-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-bottom: 4px;
+    }
+    .config-version {
+      font-size: 0.72rem;
+      color: #a060c0;
+      font-weight: 600;
+    }
+    .config-stale {
+      font-size: 0.64rem;
+      color: #ff9800;
+      background: rgba(255,152,0,0.15);
+      border: 1px solid #ff9800;
+      border-radius: 3px;
+      padding: 1px 5px;
+      font-weight: 600;
+    }
+    .config-detail {
+      font-size: 0.68rem;
+      color: #6a3a7a;
+      line-height: 1.5;
+    }
+    .config-refresh-btn {
+      margin-left: auto;
+      background: #2a0a35;
+      border: 1px solid #5a2a70;
+      color: #b070d0;
+      border-radius: 4px;
+      padding: 2px 7px;
+      font-size: 0.7rem;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .config-refresh-btn:hover { background: #4a0a60; color: #e090ff; }
+    .config-refresh-btn:disabled { opacity: 0.5; cursor: default; }
+    .update-status {
+      font-size: 0.68rem;
+      color: #7a4a8a;
+      margin-top: 4px;
+      line-height: 1.4;
+    }
+    .update-status.has-update {
+      color: #ffd080;
+    }
+    .update-link-btn {
+      margin-top: 6px;
+      width: 100%;
+      background: #2a0a35;
+      border: 1px solid #6a2a80;
+      color: #d8a0ef;
+      border-radius: 5px;
+      padding: 4px 8px;
+      font-size: 0.72rem;
+      cursor: pointer;
+    }
+    .update-link-btn:hover { background: #4a0a60; color: #f0b8ff; }
+
+    .credit {
+      padding: 10px clamp(14px, 3vw, 34px) 14px;
+      text-align: center;
+      font-size: 0.7rem;
+      color: #4a1a4a;
+      line-height: 1.5;
+    }
+    .credit a {
+      color: #7030a0;
+      text-decoration: none;
+    }
+    .credit a:hover { color: #bb60cc; text-decoration: underline; }
+
+    @media (max-width: 1150px) {
+      #tab-general.tab-pane.active,
+      #tab-domains.tab-pane.active,
+      #tab-manual.tab-pane.active {
+        grid-template-columns: 1fr;
+      }
+      #tab-general .section:nth-child(1),
+      #tab-general .section:nth-child(2),
+      #tab-general .section:nth-child(3),
+      #tab-general .section:nth-child(4) {
+        grid-column: auto;
+      }
+      #tab-blacklist.tab-pane.active {
+        grid-template-columns: 1fr;
+      }
+      #tab-domains .section,
+      #tab-manual .section,
+      #tab-blacklist .section {
+        min-height: auto;
+      }
+    }
+
+    @media (max-width: 760px) {
+      .tabs {
+        grid-template-columns: repeat(2, 1fr);
+      }
+      .tab-btn {
+        font-size: 0.8rem;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <span class="header-title">&#x1F430; BambiBrowser+</span>
+    <span class="header-ver" id="headerVersion">v6.1</span>
+    <button class="help-btn" id="helpBtn" title="Open user guide">?</button>
+  </div>
+
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="general">General</button>
+    <button class="tab-btn" data-tab="domains">Domains</button>
+    <button class="tab-btn" data-tab="manual">Manual</button>
+    <button class="tab-btn" data-tab="blacklist">Blacklist</button>
+  </div>
+
+  <div class="tab-panels">
+    <div class="tab-pane active" id="tab-general">
+      <div class="section">
+        <div class="section-title">Bambi Mode</div>
+        <div class="toggle-row">
+          <span class="toggle-label">Enable hijack</span>
+          <label class="switch">
+            <input type="checkbox" id="masterToggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Playback</div>
+        <div class="toggle-row">
+          <span class="toggle-label">Multi-monitor</span>
+          <label class="switch">
+            <input type="checkbox" id="multiMonitorToggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="toggle-row" style="margin-top:10px">
+          <span class="toggle-label-wrap">
+            <span class="toggle-label">Input lock</span>
+            <span id="inputLockReasonBadge" class="state-badge"></span>
+          </span>
+          <label class="switch">
+            <input type="checkbox" id="inputLockToggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="setting-row" id="inputLockTimerRow" style="display:none">
+          <label for="inputLockDurationSelect" class="setting-label">Lockdown duration</label>
+          <select id="inputLockDurationSelect" class="setting-select">
+            <option value="600000">10 minutes</option>
+            <option value="1200000">20 minutes</option>
+            <option value="3600000">1 hour</option>
+            <option value="7200000">2 hours</option>
+            <option value="14400000">4 hours</option>
+            <option value="21600000">6 hours</option>
+            <option value="28800000">8 hours</option>
+            <option value="43200000">12 hours</option>
+          </select>
+          <button class="add-btn" id="inputLockLockdownBtn" style="margin-top:2px">Start Lockdown</button>
+          <div class="setting-help" id="inputLockLockdownStatus">Lockdown inactive.</div>
+          <div class="setting-help">During lockdown, input lock cannot be disabled.</div>
+        </div>
+        <div class="setting-row">
+          <label for="intentWindowSelect" class="setting-label">Manual mode click sensitivity</label>
+          <select id="intentWindowSelect" class="setting-select">
+            <option value="1200">Strict (fewer accidental triggers)</option>
+            <option value="2200">Balanced (recommended)</option>
+            <option value="3200">Relaxed (more forgiving)</option>
+          </select>
+          <div class="setting-help">Used on custom domains to match click intent with video play events.</div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Remote Config</div>
+        <div class="config-info">
+          <div class="config-info-row">
+            <span class="config-version" id="configVersion">v—</span>
+            <span class="config-stale" id="configStale" style="display:none">Stale</span>
+            <button class="config-refresh-btn" id="refreshConfigBtn">&#8635; Sync</button>
+          </div>
+          <div class="config-detail" id="configDetail">Loading&#8230;</div>
+          <div class="update-status" id="updateStatus">Checking extension updates&#8230;</div>
+          <button class="update-link-btn" id="openUpdateBtn" style="display:none">Open update page</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Auto-Play Fallback</div>
+        <div class="toggle-row">
+          <span class="toggle-label">Open URL if no video found</span>
+          <label class="switch">
+            <input type="checkbox" id="autoPlayToggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div id="autoPlaySettings" style="display:none">
+          <div class="setting-row">
+            <label for="autoPlayUrlInput" class="setting-label">Fallback URL</label>
+            <input type="text" id="autoPlayUrlInput" class="add-input" placeholder="https://..." style="margin-top:2px">
+          </div>
+          <div class="setting-row">
+            <label for="autoPlayDelaySelect" class="setting-label">Open after idle for</label>
+            <select id="autoPlayDelaySelect" class="setting-select">
+              <option value="300000">5 minutes</option>
+              <option value="600000">10 minutes</option>
+              <option value="900000">15 minutes</option>
+              <option value="1200000">20 minutes</option>
+              <option value="1800000">30 minutes</option>
+              <option value="2700000">45 minutes</option>
+              <option value="3600000">1 hour</option>
+            </select>
+            <div class="setting-help">Opens in a new tab if Bambi Mode is active but no video has been sent to VLC.</div>
+          </div>
+          <div class="setting-row">
+            <span class="setting-label">Last triggered</span>
+            <span id="autoPlayLastTriggerStatus" class="setting-help" style="margin-top:0">never</span>
+          </div>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="tab-pane" id="tab-domains">
+      <div class="section" id="presetsSection">
+        <div class="section-title">Suggested Sites</div>
+        <div class="domain-list" id="presetList">
+          <div class="preset-loading" id="presetLoading">Loading&#8230;</div>
+        </div>
+      </div>
+      <div class="section">
+        <div class="section-title">Active Domains</div>
+        <div class="domain-list" id="domainList">
+          <div class="empty-msg" id="emptyMsg" style="display:none">No domains added</div>
+        </div>
+        <div class="add-row">
+          <input type="text" id="domainInput" class="add-input" placeholder="example.com">
+          <button class="add-btn" id="addBtn">Add</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="tab-pane" id="tab-manual">
+      <div class="section">
+        <div class="section-title">Manual Trigger</div>
+        <div class="toggle-row">
+          <span class="toggle-label">Enable shortcut trigger</span>
+          <label class="switch">
+            <input type="checkbox" id="manualShortcutToggle">
+            <span class="slider"></span>
+          </label>
+        </div>
+        <div class="setting-row">
+          <label for="manualShortcutSelect" class="setting-label">Keyboard shortcut</label>
+          <select id="manualShortcutSelect" class="setting-select">
+            <option value="Alt+Shift+V">Alt+Shift+V</option>
+            <option value="Ctrl+Shift+V">Ctrl+Shift+V</option>
+            <option value="Alt+V">Alt+V</option>
+            <option value="Ctrl+Alt+V">Ctrl+Alt+V</option>
+          </select>
+          <div class="setting-help">Press shortcut on any page, then click the player you want. This bypasses domain matching.</div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Local File</div>
+        <div class="setting-help" style="margin-bottom:8px">Pick a local video file to upload directly, or paste a full Windows path. Quoted paths are cleaned automatically.</div>
+        <input type="file" id="localFilePicker" accept="video/*,.mp4,.mkv,.avi,.mov,.wmv,.flv,.webm,.m4v,.mpg,.mpeg,.ts,.m2ts,.ogg,.ogv" style="display:none;">
+        <div class="add-row">
+          <input type="text" id="localFileInput" class="add-input" placeholder="No file selected">
+          <button class="add-btn" id="localFileBrowseBtn">Browse</button>
+          <button class="add-btn" id="localFileBtn">&#9654; Play</button>
+        </div>
+        <div id="localFileStatus" style="font-size:0.72rem;color:#7e4f88;margin-top:6px;min-height:1em;"></div>
+      </div>
+    </div>
+
+    <div class="tab-pane" id="tab-blacklist">
+      <div class="section">
+        <div class="section-title bl-title">&#x26D4; Blacklist URLs</div>
+        <div class="domain-list" id="blacklistList">
+          <div class="empty-msg" id="blacklistEmptyMsg">No URLs blacklisted</div>
+        </div>
+        <div class="add-row">
+          <input type="text" id="blacklistInput" class="add-input bl-input" placeholder="keyword or path segment">
+          <button class="add-btn bl-add-btn" id="addBlacklistBtn">Add</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="status-wrap">
+    <div class="status-row">
+      <div class="status-dot" id="statusDot"></div>
+      <span id="statusText">Checking bambi_player...</span>
+    </div>
+    <div id="statusPlayback" class="status-playback"></div>
+    <div id="statusProgress" class="status-progress" role="progressbar" aria-label="Playback progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+      <div id="statusProgressFill" class="status-progress-fill"></div>
+    </div>
+  </div>
+
+  <div class="credit">
+    Based on <a href="https://github.com/sissy3city/BambiBrowser" target="_blank">BambiBrowser</a> by sissy3city
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>

@@ -1,12 +1,12 @@
 {
   "manifest_version": 3,
   "name": "BambiBrowser+",
-  "version": "5.21",
+  "version": "6.1",
   "background": {
     "service_worker": "background.js"
   },
   "description": "Automatic fullscreen video hijack — configurable domains + blacklist",
-  "permissions": ["storage", "tabs"],
+  "permissions": ["storage", "tabs", "idle", "alarms"],
   "host_permissions": ["<all_urls>"],
   "icons": {
     "16": "icon16.png",
@@ -29,5 +29,9 @@
       "48": "icon48.png",
       "128": "icon128.png"
     }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
   }
 }

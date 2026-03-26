@@ -1,6 +1,8 @@
 # 💖 BambiBrowser+ — Sissy Edition 💖
 
-> 🔍🆕 New in v5.21: Video-detection inspection tooling + popup update-check support.
+> 🆕 New in v6.1: Compact live-status popup + full-size settings tab with cleaner workflow.
+
+> 📡 v5.22: Live VLC status endpoint and real-time playback clock in popup.
 >
 > 🔒🔄 v5.2: Input Lock Timer and Auto-Play Fallback — smarter single-monitor sessions and automatic video redirection.
 >
@@ -31,19 +33,14 @@ Double-click **`bambi_player.exe`**.
 
 A tiny tray icon appears — that means your helper is awake and waiting quietly in the background. No windows, no popups.
 
-### Multi-monitor mode (new)
+### Multi-monitor mode
 
-If you want playback on all monitors at once (2-3 screens), run:
+Use the popup's **Multi-monitor** toggle to control whether playback opens on:
 
-```powershell
-.\start_bambi_player_multimon.ps1
-```
+- Primary monitor only (toggle OFF)
+- All detected monitors (toggle ON)
 
-This starts `bambi_player_multimon.py` on the same API (`http://127.0.0.1:5655`) used by the extension.
-
-- Monitor 1 (primary): full volume
-- Monitor 2/3+: muted
-- All monitors: fullscreen playback
+The same `bambi_player.exe` helper handles both modes on the same local API (`http://127.0.0.1:5655`).
 
 ---
 
@@ -69,6 +66,8 @@ Examples:
 - 🟢 Green — `bambi_player.exe` is running and reachable
 - 🔴 Red — player is offline; extension falls back to browser autoplay
 
+When VLC is active, the popup also shows a live playback clock (`current / total`) from the helper status endpoint.
+
 ---
 
 ## 🌸 4. What Happens Automatically
@@ -82,7 +81,7 @@ Whenever you open a video on a watched domain:
 **If the player is running:**
 - Browser video pauses
 - Video URL is sent to `bambi_player` → VLC opens fullscreen
-- Keyboard + pointer lock activates
+- Keyboard + pointer lock activates only if **Input lock** is ON (or lockdown is active)
 - When the video ends: VLC closes, locks release, everything returns to normal
 
 **If the player is not running:**
@@ -114,11 +113,17 @@ Just automatic fullscreen hijack whenever your helper is running — on whatever
 | | |
 |---|---|
 | Original author | [sissy3city](https://github.com/sissy3city) — [BambiBrowser](https://github.com/sissy3city/BambiBrowser) |
-| This fork | [geordie-bambi-mk2](https://github.com/geordie-bambi-mk2) — BambiBrowser+ v5.21 |
+| This fork | [geordie-bambi-mk2](https://github.com/geordie-bambi-mk2) — BambiBrowser+ v6.1 |
 
 ---
 
-## 🌸 v5.21 — Video Detection Inspection + Update Check
+## 🌸 v6.1 — Compact Popup + Full Settings Tab
+
+- Popup is now a compact live dashboard: helper state, multi-monitor status, input lock status, playback progress.
+- Settings moved to full options page opened from popup cog for better usability and no cramped scrolling.
+- Guide pages refreshed into a full-site style layout with consistent navigation and wider content presentation.
+
+## 🌸 v5.22 — Live VLC Status + Playback Position
 
 ### Playwright live video inspection
 
@@ -162,19 +167,17 @@ The popup now compares the installed extension version with the hosted config ve
 
 ## 🌸 v5.2 — New Features
 
-### 🔒 Input Lock Timer (single-monitor)
+### 🔒 Input Lock Timer
 
-Multi-monitor mode has always locked the keyboard and pointer during playback. Now single-monitor sessions can do the same — with an automatic release timer so you don't get stuck.
+Input lock is now an independent setting. You can turn it ON/OFF regardless of multi-monitor mode.
 
 **How to use:**
 1. Open the popup → **General** tab → **Playback** section.
-2. Toggle on **Input lock (single-monitor)**.
+2. Toggle on **Input lock**.
 3. Choose **Lockdown duration** — picks from 10 min, 20 min, 1 h, 2 h, 4 h, 6 h, 8 h, or 12 h.
 4. Click **Start Lockdown**.
 
-When a VLC fullscreen session starts, keyboard and pointer lock engage. During lockdown, input lock cannot be disabled in settings. After the timer ends, input lock is still ON — the timer only allows you to disable it manually again.
-
-> **Note:** Multi-monitor mode is unaffected by this toggle — it always engages input lock regardless.
+When a VLC fullscreen session starts, keyboard and pointer lock engage if Input lock is enabled. During lockdown, input lock cannot be disabled in settings. After the timer ends, input lock is still ON — the timer only allows you to disable it manually again.
 
 ---
 
