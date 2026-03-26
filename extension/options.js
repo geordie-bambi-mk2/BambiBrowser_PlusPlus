@@ -10,6 +10,7 @@ const REMOTE_CONFIG_URL = "https://geordie-bambi-mk2.github.io/bbrowser-resource
 const UPDATE_REPO_URL = "https://github.com/geordie-bambi-mk2/BambiBrowser_PlusPlus";
 const DEFAULT_VLC_ACTIVE_PLAYBACK_MS = 15 * 60 * 1000;
 const BAMBI_STATUS_ENDPOINT = BAMBI_SERVER + "/status";
+let bambiLockdownUiActive = false;
 
 function markLikelyVlcPlaybackActive(durationMs = DEFAULT_VLC_ACTIVE_PLAYBACK_MS, source = "popup-local-file") {
   const startedAt = Date.now();
@@ -216,6 +217,10 @@ function renderDomains(domains) {
     btn.className = "domain-remove";
     btn.textContent = "\u2715";
     btn.title = "Remove domain";
+    btn.disabled = bambiLockdownUiActive;
+    if (bambiLockdownUiActive) {
+      btn.title = "Domain removal is locked during lockdown";
+    }
     btn.addEventListener("click", () => removeDomain(domain));
 
     const actions = document.createElement("span");
@@ -281,15 +286,24 @@ async function configureDomainPlayer(domain) {
 // ADD / REMOVE DOMAINS
 // -------------------------------------------------------
 function removeDomain(domain) {
+  chrome.storage.local.get({ bambiInputLockLockedUntil: 0 }, lockData => {
+    const lockdownActive = Number(lockData.bambiInputLockLockedUntil) > Date.now();
+    if (lockdownActive) return;
+
   chrome.storage.local.get({ bambiDomains: DEFAULT_DOMAINS }, data => {
     const updated = (data.bambiDomains || [])
       .map(normalizeDomainInput)
       .filter(d => d && d !== normalizeDomainInput(domain));
     chrome.storage.local.set({ bambiDomains: updated }, () => renderDomains(updated));
   });
+  });
 }
 
 function addDomain() {
+  chrome.storage.local.get({ bambiInputLockLockedUntil: 0 }, lockData => {
+    const lockdownActive = Number(lockData.bambiInputLockLockedUntil) > Date.now();
+    if (lockdownActive) return;
+
   const input = document.getElementById("domainInput");
   const value = normalizeDomainInput(input.value);
 
@@ -306,6 +320,7 @@ function addDomain() {
       renderDomains(updated);
       input.value = "";
     });
+  });
   });
 }
 
@@ -532,6 +547,7 @@ async function renderPresets(activeDomains) {
 // -------------------------------------------------------
 document.addEventListener("DOMContentLoaded", () => {
   setupTabs();
+  const masterToggle = document.getElementById("masterToggle");
   const intentWindowSelect = document.getElementById("intentWindowSelect");
   const manualShortcutToggle = document.getElementById("manualShortcutToggle");
   const manualShortcutSelect = document.getElementById("manualShortcutSelect");
@@ -542,10 +558,17 @@ document.addEventListener("DOMContentLoaded", () => {
   const inputLockLockdownBtn = document.getElementById("inputLockLockdownBtn");
   const inputLockLockdownStatus = document.getElementById("inputLockLockdownStatus");
   const inputLockReasonBadge = document.getElementById("inputLockReasonBadge");
+  const autoPlayToggle = document.getElementById("autoPlayToggle");
+  const autoPlaySettings = document.getElementById("autoPlaySettings");
+  const autoPlayUrlInput = document.getElementById("autoPlayUrlInput");
+  const autoPlayDelaySelect = document.getElementById("autoPlayDelaySelect");
+  const addDomainBtn = document.getElementById("addBtn");
+  const domainInput = document.getElementById("domainInput");
 
   let inputLockDurationMs = 3600000;
   let inputLockLockedUntil = 0;
   let inputLockTickerId = null;
+  let lockdownStorageSyncInFlight = false;
 
   function isInputLockLockdownActive() {
     return Number(inputLockLockedUntil) > Date.now();
@@ -558,6 +581,65 @@ document.addEventListener("DOMContentLoaded", () => {
     const seconds = totalSeconds % 60;
     if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`;
     return `${minutes}m ${seconds}s`;
+  }
+
+  function updateLockdownBoundControls(lockdownActive) {
+    bambiLockdownUiActive = lockdownActive;
+
+    if (lockdownActive) {
+      masterToggle.checked = true;
+      multiMonitorToggle.checked = true;
+      inputLockToggle.checked = true;
+      autoPlayToggle.checked = true;
+      autoPlaySettings.style.display = "";
+    }
+
+    masterToggle.disabled = lockdownActive;
+    multiMonitorToggle.disabled = lockdownActive;
+    autoPlayToggle.disabled = lockdownActive;
+    autoPlayUrlInput.disabled = lockdownActive;
+    autoPlayDelaySelect.disabled = lockdownActive;
+    addDomainBtn.disabled = lockdownActive;
+    domainInput.disabled = lockdownActive;
+
+    Array.from(document.querySelectorAll("#domainList .domain-remove")).forEach(btn => {
+      btn.disabled = lockdownActive;
+      if (lockdownActive) {
+        btn.title = "Domain removal is locked during lockdown";
+      } else {
+        btn.title = "Remove domain";
+      }
+    });
+  }
+
+  function syncLockdownManagedSettings() {
+    if (!isInputLockLockdownActive() || lockdownStorageSyncInFlight) return;
+    lockdownStorageSyncInFlight = true;
+    chrome.storage.local.get(
+      {
+        bambiActivated: false,
+        bambiMultiMonitor: false,
+        bambiInputLockEnabled: false,
+        bambiAutoPlayEnabled: false,
+      },
+      data => {
+        const updates = {};
+        if (!data.bambiActivated) updates.bambiActivated = true;
+        if (!data.bambiMultiMonitor) updates.bambiMultiMonitor = true;
+        if (!data.bambiInputLockEnabled) updates.bambiInputLockEnabled = true;
+        if (!data.bambiAutoPlayEnabled) updates.bambiAutoPlayEnabled = true;
+
+        const done = () => {
+          lockdownStorageSyncInFlight = false;
+        };
+
+        if (Object.keys(updates).length) {
+          chrome.storage.local.set(updates, done);
+          return;
+        }
+        done();
+      }
+    );
   }
 
   function updateInputLockUi() {
@@ -601,6 +683,9 @@ document.addEventListener("DOMContentLoaded", () => {
         inputLockTickerId = null;
       }
     }
+
+    updateLockdownBoundControls(lockdownActive);
+    if (lockdownActive) syncLockdownManagedSettings();
   }
 
   // Load saved state
@@ -622,7 +707,7 @@ document.addEventListener("DOMContentLoaded", () => {
       bambiAutoPlayLastTriggerAt: 0,
     },
     data => {
-      document.getElementById("masterToggle").checked = data.bambiActivated;
+      masterToggle.checked = data.bambiActivated;
       multiMonitorToggle.checked = Boolean(data.bambiMultiMonitor);
       inputLockToggle.checked = Boolean(data.bambiInputLockEnabled);
       const validLockDurations = [600000,1200000,3600000,7200000,14400000,21600000,28800000,43200000];
@@ -638,14 +723,13 @@ document.addEventListener("DOMContentLoaded", () => {
         inputLockToggle.checked = true;
         chrome.storage.local.set({ bambiInputLockEnabled: true });
       }
-      updateInputLockUi();
-      document.getElementById("autoPlayToggle").checked = Boolean(data.bambiAutoPlayEnabled);
-      document.getElementById("autoPlaySettings").style.display = data.bambiAutoPlayEnabled ? "" : "none";
-      document.getElementById("autoPlayUrlInput").value = data.bambiAutoPlayUrl || "";
+      autoPlayToggle.checked = Boolean(data.bambiAutoPlayEnabled);
+      autoPlaySettings.style.display = data.bambiAutoPlayEnabled ? "" : "none";
+      autoPlayUrlInput.value = data.bambiAutoPlayUrl || "";
       updateLastTriggerDisplay(data.bambiAutoPlayLastTriggerAt || 0);
       const validDelays = [300000,600000,900000,1200000,1800000,2700000,3600000];
       const savedDelay = Number(data.bambiAutoPlayDelayMs);
-      document.getElementById("autoPlayDelaySelect").value = String(validDelays.includes(savedDelay) ? savedDelay : 600000);
+      autoPlayDelaySelect.value = String(validDelays.includes(savedDelay) ? savedDelay : 600000);
       manualShortcutToggle.checked = Boolean(data.bambiManualShortcutEnabled);
       const selectedShortcut = String(data.bambiManualShortcut || DEFAULT_MANUAL_SHORTCUT);
       manualShortcutSelect.value = ["Alt+Shift+V", "Ctrl+Shift+V", "Alt+V", "Ctrl+Alt+V"].includes(selectedShortcut)
@@ -664,6 +748,7 @@ document.addEventListener("DOMContentLoaded", () => {
       renderDomains(normalizedDomains);
       renderPresets(normalizedDomains);
       renderBlacklist(data.bambiBlacklist);
+      updateInputLockUi();
     }
   );
 
@@ -706,7 +791,11 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Master toggle — also triggers hijack on the currently active tab
-  document.getElementById("masterToggle").addEventListener("change", e => {
+  masterToggle.addEventListener("change", e => {
+    if (isInputLockLockdownActive()) {
+      masterToggle.checked = true;
+      return;
+    }
     const activated = e.target.checked;
     chrome.storage.local.set({ bambiActivated: activated });
     if (activated) {
@@ -720,6 +809,11 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Multi-monitor toggle
   multiMonitorToggle.addEventListener("change", e => {
+    if (isInputLockLockdownActive()) {
+      multiMonitorToggle.checked = true;
+      updateInputLockUi();
+      return;
+    }
     const enabled = e.target.checked;
     chrome.storage.local.set({ bambiMultiMonitor: enabled });
     updateInputLockUi();
@@ -760,6 +854,9 @@ document.addEventListener("DOMContentLoaded", () => {
     if (changes.bambiMultiMonitor !== undefined) {
       multiMonitorToggle.checked = Boolean(changes.bambiMultiMonitor.newValue);
     }
+    if (changes.bambiActivated !== undefined) {
+      masterToggle.checked = Boolean(changes.bambiActivated.newValue);
+    }
     if (changes.bambiInputLockEnabled !== undefined) {
       inputLockToggle.checked = Boolean(changes.bambiInputLockEnabled.newValue);
     }
@@ -772,12 +869,24 @@ document.addEventListener("DOMContentLoaded", () => {
       inputLockLockedUntil = Number(changes.bambiInputLockLockedUntil.newValue) || 0;
     }
     if (
+      changes.bambiActivated !== undefined ||
       changes.bambiMultiMonitor !== undefined ||
       changes.bambiInputLockEnabled !== undefined ||
       changes.bambiInputLockDurationMs !== undefined ||
       changes.bambiInputLockLockedUntil !== undefined
     ) {
       updateInputLockUi();
+    }
+    if (changes.bambiAutoPlayEnabled !== undefined) {
+      autoPlayToggle.checked = Boolean(changes.bambiAutoPlayEnabled.newValue);
+      autoPlaySettings.style.display = autoPlayToggle.checked ? "" : "none";
+      if (isInputLockLockdownActive()) {
+        syncLockdownManagedSettings();
+      }
+    }
+    if (changes.bambiDomains !== undefined) {
+      const nextDomains = (changes.bambiDomains.newValue || []).map(normalizeDomainInput).filter(Boolean);
+      renderDomains(nextDomains);
     }
     if (changes.bambiAutoPlayLastTriggerAt !== undefined) {
       updateLastTriggerDisplay(changes.bambiAutoPlayLastTriggerAt.newValue || 0);
@@ -801,15 +910,27 @@ document.addEventListener("DOMContentLoaded", () => {
     }
   }
 
-  document.getElementById("autoPlayToggle").addEventListener("change", e => {
+  autoPlayToggle.addEventListener("change", e => {
+    if (isInputLockLockdownActive()) {
+      autoPlayToggle.checked = true;
+      autoPlaySettings.style.display = "";
+      syncLockdownManagedSettings();
+      return;
+    }
     const enabled = e.target.checked;
     chrome.storage.local.set({ bambiAutoPlayEnabled: enabled });
-    document.getElementById("autoPlaySettings").style.display = enabled ? "" : "none";
+    autoPlaySettings.style.display = enabled ? "" : "none";
   });
-  document.getElementById("autoPlayUrlInput").addEventListener("change", e => {
+  autoPlayUrlInput.addEventListener("change", e => {
+    if (isInputLockLockdownActive()) {
+      return;
+    }
     chrome.storage.local.set({ bambiAutoPlayUrl: e.target.value.trim() });
   });
-  document.getElementById("autoPlayDelaySelect").addEventListener("change", e => {
+  autoPlayDelaySelect.addEventListener("change", e => {
+    if (isInputLockLockdownActive()) {
+      return;
+    }
     const val = Number(e.target.value);
     if (!val) return;
     chrome.storage.local.set({ bambiAutoPlayDelayMs: val });
