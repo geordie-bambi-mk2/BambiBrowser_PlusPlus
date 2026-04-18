@@ -720,8 +720,9 @@
         </div>
         <div id="autoPlaySettings" style="display:none">
           <div class="setting-row">
-            <label for="autoPlayUrlInput" class="setting-label">Fallback URL</label>
-            <input type="text" id="autoPlayUrlInput" class="add-input" placeholder="https://..." style="margin-top:2px">
+            <label for="autoPlayUrlsInput" class="setting-label">Fallback URLs</label>
+            <textarea id="autoPlayUrlsInput" class="add-input" placeholder="https://...&#10;https://..." style="margin-top:2px;min-height:96px;resize:vertical;"></textarea>
+            <div class="setting-help">Use one URL per line. A random URL is opened when fallback triggers.</div>
           </div>
           <div class="setting-row">
             <label for="autoPlayDelaySelect" class="setting-label">Open after idle for</label>
@@ -740,6 +741,16 @@
             <span class="setting-label">Last triggered</span>
             <span id="autoPlayLastTriggerStatus" class="setting-help" style="margin-top:0">never</span>
           </div>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Settings Backup</div>
+        <div class="setting-help" style="margin-bottom:8px">Export/import settings as XML. Imported values keep remote config sync behavior.</div>
+        <input type="file" id="settingsImportInput" accept=".xml,text/xml,application/xml" style="display:none;">
+        <div class="add-row">
+          <button class="add-btn" id="exportSettingsBtn">Export XML</button>
+          <button class="add-btn" id="importSettingsBtn">Import XML</button>
         </div>
       </div>
 

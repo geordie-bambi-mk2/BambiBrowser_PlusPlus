@@ -10,6 +10,28 @@ function isHttpUrl(url) {
   return typeof url === "string" && /^https?:\/\/.+/.test(url);
 }
 
+function normalizeAutoPlayUrls(urls, legacyUrl = "") {
+  const merged = [];
+  if (Array.isArray(urls)) merged.push(...urls);
+  if (legacyUrl) merged.push(legacyUrl);
+
+  const seen = new Set();
+  const result = [];
+  merged.forEach((value) => {
+    const candidate = String(value || "").trim();
+    if (!isHttpUrl(candidate)) return;
+    if (seen.has(candidate)) return;
+    seen.add(candidate);
+    result.push(candidate);
+  });
+  return result;
+}
+
+function pickRandomAutoPlayUrl(urls) {
+  if (!Array.isArray(urls) || !urls.length) return "";
+  return urls[Math.floor(Math.random() * urls.length)] || "";
+}
+
 function getLikelyVlcPlaybackUntil(data) {
   const until = Number(data?.bambiVlcPlaybackUntil) || 0;
   return until > Date.now() ? until : 0;
@@ -67,13 +89,15 @@ function checkIdleAndTriggerAutoplay() {
     {
       bambiAutoPlayEnabled: false,
       bambiAutoPlayUrl: "",
+      bambiAutoPlayUrls: [],
       bambiAutoPlayDelayMs: 600000,
       bambiAutoPlayLastTriggerAt: 0,
       bambiVlcPlaybackUntil: 0,
     },
     (data) => {
       const enabled = Boolean(data.bambiAutoPlayEnabled);
-      const url = String(data.bambiAutoPlayUrl || "").trim();
+      const urls = normalizeAutoPlayUrls(data.bambiAutoPlayUrls, data.bambiAutoPlayUrl || "");
+      const url = pickRandomAutoPlayUrl(urls);
       const delayMs = Math.max(60000, Number(data.bambiAutoPlayDelayMs) || 600000);
       const lastTriggerAt = Number(data.bambiAutoPlayLastTriggerAt) || 0;
       const vlcPlaybackUntil = getLikelyVlcPlaybackUntil(data);
@@ -105,7 +129,11 @@ function checkIdleAndTriggerAutoplay() {
 
           if (state !== "idle" && state !== "locked") return;
 
-          chrome.storage.local.set({ bambiAutoPlayLastTriggerAt: Date.now() }, () => {
+          chrome.storage.local.set({
+            bambiAutoPlayLastTriggerAt: Date.now(),
+            bambiAutoPlayUrls: urls,
+            bambiAutoPlayUrl: urls[0] || "",
+          }, () => {
             openConfiguredAutoplayUrl(url, `idle-state:${state}`);
           });
         });
@@ -143,7 +171,11 @@ chrome.storage.onChanged.addListener((changes, areaName) => {
     }
   }
 
-  if (changes.bambiAutoPlayDelayMs !== undefined || changes.bambiAutoPlayUrl !== undefined) {
+  if (
+    changes.bambiAutoPlayDelayMs !== undefined ||
+    changes.bambiAutoPlayUrl !== undefined ||
+    changes.bambiAutoPlayUrls !== undefined
+  ) {
     // Let changed settings trigger promptly on next check cycle.
     chrome.storage.local.set({ bambiAutoPlayLastTriggerAt: 0 });
   }

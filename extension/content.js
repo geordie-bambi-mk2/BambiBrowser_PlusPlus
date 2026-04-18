@@ -154,6 +154,32 @@ if (window.__bambiLoaded) {
     return h === d || h.endsWith(`.${d}`);
   }
 
+  function isHttpUrl(value) {
+    return typeof value === "string" && /^https?:\/\/.+/i.test(String(value || "").trim());
+  }
+
+  function normalizeAutoPlayUrls(urls, legacyUrl = "") {
+    const merged = [];
+    if (Array.isArray(urls)) merged.push(...urls);
+    if (legacyUrl) merged.push(legacyUrl);
+
+    const seen = new Set();
+    const normalized = [];
+    merged.forEach((raw) => {
+      const candidate = String(raw || "").trim();
+      if (!isHttpUrl(candidate)) return;
+      if (seen.has(candidate)) return;
+      seen.add(candidate);
+      normalized.push(candidate);
+    });
+    return normalized;
+  }
+
+  function pickRandomAutoPlayUrl(urls) {
+    if (!Array.isArray(urls) || !urls.length) return "";
+    return urls[Math.floor(Math.random() * urls.length)] || "";
+  }
+
   function normalizeShortcutString(shortcut) {
     if (!shortcut) return DEFAULT_MANUAL_SHORTCUT;
 
@@ -307,7 +333,7 @@ if (window.__bambiLoaded) {
 
   // Auto-play fallback URL
   let bambiAutoPlayEnabled = false;
-  let bambiAutoPlayUrl = "";
+  let bambiAutoPlayUrls = [];
   let bambiAutoPlayDelayMs = 600000;
   let autoPlayFallbackTimerId = null;
   let bambiRemotePlayerHints = {};
@@ -623,6 +649,24 @@ if (window.__bambiLoaded) {
     }
     if (changes.bambiInputLockEnabled !== undefined) {
       bambiInputLockEnabled = Boolean(changes.bambiInputLockEnabled.newValue);
+      console.log("[Bambi] storage change → input lock enabled:", bambiInputLockEnabled);
+      // Activate/deactivate keyboard and pointer lock based on input lock state
+      if (bambiInputLockEnabled) {
+        enableKeyboardLock();
+        enablePointerLock();
+      } else {
+        // Unlock keyboard and pointer when input lock is disabled
+        if (navigator.keyboard?.unlock) {
+          navigator.keyboard.unlock().catch(e => {
+            console.warn("[Bambi] keyboard.unlock failed:", e);
+          });
+          console.log("[Bambi] keyboard unlocked");
+        }
+        if (document.exitPointerLock) {
+          document.exitPointerLock();
+          console.log("[Bambi] pointer lock exited");
+        }
+      }
     }
     if (changes.bambiInputLockDurationMs !== undefined) {
       bambiInputLockDurationMs = Number(changes.bambiInputLockDurationMs.newValue) || 3600000;
@@ -639,8 +683,12 @@ if (window.__bambiLoaded) {
       bambiAutoPlayEnabled = Boolean(changes.bambiAutoPlayEnabled.newValue);
       if (bambiAutoPlayEnabled) scheduleAutoPlayFallback(); else cancelAutoPlayFallback();
     }
-    if (changes.bambiAutoPlayUrl !== undefined) {
-      bambiAutoPlayUrl = String(changes.bambiAutoPlayUrl.newValue || "");
+    if (changes.bambiAutoPlayUrls !== undefined || changes.bambiAutoPlayUrl !== undefined) {
+      bambiAutoPlayUrls = normalizeAutoPlayUrls(
+        changes.bambiAutoPlayUrls?.newValue,
+        changes.bambiAutoPlayUrl?.newValue || ""
+      );
+      if (bambiAutoPlayEnabled) scheduleAutoPlayFallback();
     }
     if (changes.bambiAutoPlayDelayMs !== undefined) {
       bambiAutoPlayDelayMs = Number(changes.bambiAutoPlayDelayMs.newValue) || 600000;
@@ -1135,7 +1183,7 @@ if (window.__bambiLoaded) {
   // ------------------------------------------------------
   function scheduleAutoPlayFallback(delayOverrideMs = null) {
     cancelAutoPlayFallback();
-    if (!bambiAutoPlayEnabled || !bambiAutoPlayUrl || !bambiAutoPlayDelayMs) return;
+    if (!bambiAutoPlayEnabled || !bambiAutoPlayDelayMs || !bambiAutoPlayUrls.length) return;
     if (!isBambiActivated()) return;
     const delayMs = Math.max(1000, Number(delayOverrideMs) || bambiAutoPlayDelayMs);
     autoPlayFallbackTimerId = setTimeout(async () => {
@@ -1147,9 +1195,10 @@ if (window.__bambiLoaded) {
         scheduleAutoPlayFallback(Math.min(bambiAutoPlayDelayMs, remainingMs + 1000));
         return;
       }
-      if (!videoAlreadySent && bambiAutoPlayUrl && /^https?:\/\/.+/.test(bambiAutoPlayUrl)) {
-        console.log("[Bambi] auto-play fallback → opening:", bambiAutoPlayUrl);
-        const sent = safeRuntimeSendMessage({ type: "BAMBI_OPEN_TAB", url: bambiAutoPlayUrl });
+      const nextUrl = pickRandomAutoPlayUrl(bambiAutoPlayUrls);
+      if (!videoAlreadySent && nextUrl && isHttpUrl(nextUrl)) {
+        console.log("[Bambi] auto-play fallback → opening:", nextUrl);
+        const sent = safeRuntimeSendMessage({ type: "BAMBI_OPEN_TAB", url: nextUrl });
         if (!sent) {
           console.log("[Bambi] runtime unavailable, stopping local fallback timer");
           return;
@@ -1164,6 +1213,12 @@ if (window.__bambiLoaded) {
   }
 
   function suppressKeys(e) {
+    // Explicitly block Windows/Meta key, Alt, F11, Escape
+    if (e.key === "Meta" || e.metaKey || e.key === "Alt" || e.altKey || e.key === "F11" || e.code === "Escape") {
+      e.stopPropagation();
+      e.preventDefault();
+      return false;
+    }
     e.stopPropagation();
     e.preventDefault();
   }
@@ -1177,10 +1232,12 @@ if (window.__bambiLoaded) {
         enableKeyboardLock();
         enablePointerLock();
         window.addEventListener("keydown", suppressKeys, true);
+        window.addEventListener("keyup", suppressKeys, true);
       }
     } else if (!document.fullscreenElement) {
       bambiInducedFullscreen = false;
       window.removeEventListener("keydown", suppressKeys, true);
+      window.removeEventListener("keyup", suppressKeys, true);
       if (navigator.keyboard?.unlock) {
         console.log("[Bambi] unlocking keyboard");
         navigator.keyboard.unlock();
@@ -1884,6 +1941,9 @@ if (window.__bambiLoaded) {
         );
       }
 
+      window.removeEventListener("keydown", suppressKeys, true);
+      window.removeEventListener("keyup", suppressKeys, true);
+
       if (navigator.keyboard?.unlock) {
         navigator.keyboard.unlock();
       }
@@ -1917,6 +1977,7 @@ if (window.__bambiLoaded) {
       bambiInputLockLockedUntil: 0,
       bambiAutoPlayEnabled: false,
       bambiAutoPlayUrl: "",
+      bambiAutoPlayUrls: [],
       bambiAutoPlayDelayMs: 600000,
       bambiVlcPlaybackUntil: 0,
     },
@@ -1946,7 +2007,11 @@ if (window.__bambiLoaded) {
       }
       enforceInputLockState("init");
       bambiAutoPlayEnabled = Boolean(data.bambiAutoPlayEnabled);
-      bambiAutoPlayUrl = String(data.bambiAutoPlayUrl || "");
+      bambiAutoPlayUrls = normalizeAutoPlayUrls(data.bambiAutoPlayUrls, data.bambiAutoPlayUrl || "");
+      safeStorageSet({
+        bambiAutoPlayUrls,
+        bambiAutoPlayUrl: bambiAutoPlayUrls[0] || "",
+      });
       bambiAutoPlayDelayMs = Number(data.bambiAutoPlayDelayMs) || 600000;
       userIntentWindowMs = Number.isFinite(Number(data.bambiIntentWindowMs))
         ? Number(data.bambiIntentWindowMs)

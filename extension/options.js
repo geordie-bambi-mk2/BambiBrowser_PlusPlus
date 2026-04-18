@@ -10,7 +10,213 @@ const REMOTE_CONFIG_URL = "https://geordie-bambi-mk2.github.io/bbrowser-resource
 const UPDATE_REPO_URL = "https://github.com/geordie-bambi-mk2/BambiBrowser_PlusPlus";
 const DEFAULT_VLC_ACTIVE_PLAYBACK_MS = 15 * 60 * 1000;
 const BAMBI_STATUS_ENDPOINT = BAMBI_SERVER + "/status";
+const AUTOPLAY_DELAY_OPTIONS_MS = [300000, 600000, 900000, 1200000, 1800000, 2700000, 3600000];
+const SETTINGS_XML_ROOT = "bambi-settings";
 let bambiLockdownUiActive = false;
+
+const SETTINGS_EXPORT_DEFAULTS = {
+  bambiActivated: false,
+  bambiDomains: DEFAULT_DOMAINS,
+  bambiBlacklist: [],
+  bambiMultiMonitor: true,
+  bambiIntentWindowMs: DEFAULT_INTENT_WINDOW_MS,
+  bambiManualShortcutEnabled: false,
+  bambiManualShortcut: DEFAULT_MANUAL_SHORTCUT,
+  bambiInputLockEnabled: false,
+  bambiInputLockDurationMs: 3600000,
+  bambiInputLockLockedUntil: 0,
+  bambiAutoPlayEnabled: false,
+  bambiAutoPlayUrl: "",
+  bambiAutoPlayUrls: [],
+  bambiAutoPlayDelayMs: 600000,
+  bambiAutoPlayLastTriggerAt: 0,
+  bambiDomainPlayerHints: {},
+  bambiDomainAssocMap: {},
+  bambiDomainAssocMapFetchedAt: 0,
+  bambiPresets: [],
+  bambiAdDomains: [],
+  bambiRemotePlayerHints: {},
+  bambiConfigVersion: null,
+  bambiConfigStale: false,
+};
+
+function isHttpUrl(value) {
+  return typeof value === "string" && /^https?:\/\/.+/i.test(value.trim());
+}
+
+function normalizeAutoPlayUrlList(urls, legacyUrl = "") {
+  const values = [];
+  if (Array.isArray(urls)) {
+    values.push(...urls);
+  } else if (typeof urls === "string") {
+    values.push(...urls.split(/[\r\n,]+/));
+  }
+  if (legacyUrl) values.push(legacyUrl);
+
+  const seen = new Set();
+  const normalized = [];
+  values.forEach((raw) => {
+    const candidate = String(raw || "").trim();
+    if (!isHttpUrl(candidate)) return;
+    if (seen.has(candidate)) return;
+    seen.add(candidate);
+    normalized.push(candidate);
+  });
+  return normalized;
+}
+
+function autoPlayUrlsToText(urls) {
+  return normalizeAutoPlayUrlList(urls).join("\n");
+}
+
+function parseAutoPlayUrlsFromText(input) {
+  return normalizeAutoPlayUrlList(String(input || "").split(/\r?\n/));
+}
+
+function toPlainObject(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return value;
+}
+
+function toIntegerOrDefault(value, fallback) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.floor(parsed);
+}
+
+function ensureDownload(filename, contentType, textContent) {
+  const blob = new Blob([textContent], { type: contentType });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function buildSettingsXml(settings) {
+  const doc = document.implementation.createDocument("", SETTINGS_XML_ROOT, null);
+  const root = doc.documentElement;
+  root.setAttribute("format", "1");
+  root.setAttribute("exportedAt", new Date().toISOString());
+  root.setAttribute("extensionVersion", chrome.runtime.getManifest().version);
+
+  Object.keys(settings).sort().forEach((key) => {
+    const entry = doc.createElement("setting");
+    entry.setAttribute("key", key);
+    entry.textContent = JSON.stringify(settings[key]);
+    root.appendChild(entry);
+  });
+
+  return new XMLSerializer().serializeToString(doc);
+}
+
+function parseSettingsXml(xmlText) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(String(xmlText || ""), "application/xml");
+  if (doc.querySelector("parsererror")) {
+    throw new Error("Invalid XML file.");
+  }
+
+  const root = doc.documentElement;
+  if (!root || root.nodeName !== SETTINGS_XML_ROOT) {
+    throw new Error("Unexpected XML format.");
+  }
+
+  const raw = {};
+  Array.from(root.querySelectorAll("setting[key]")).forEach((node) => {
+    const key = String(node.getAttribute("key") || "").trim();
+    if (!key) return;
+    const text = node.textContent || "";
+    try {
+      raw[key] = JSON.parse(text);
+    } catch {
+      raw[key] = text;
+    }
+  });
+
+  return raw;
+}
+
+function sanitizeImportedSettings(rawSettings) {
+  const raw = toPlainObject(rawSettings);
+  const updates = {};
+
+  if (raw.bambiActivated !== undefined) updates.bambiActivated = Boolean(raw.bambiActivated);
+  if (raw.bambiMultiMonitor !== undefined) updates.bambiMultiMonitor = Boolean(raw.bambiMultiMonitor);
+  if (raw.bambiManualShortcutEnabled !== undefined) updates.bambiManualShortcutEnabled = Boolean(raw.bambiManualShortcutEnabled);
+  if (raw.bambiInputLockEnabled !== undefined) updates.bambiInputLockEnabled = Boolean(raw.bambiInputLockEnabled);
+  if (raw.bambiAutoPlayEnabled !== undefined) updates.bambiAutoPlayEnabled = Boolean(raw.bambiAutoPlayEnabled);
+  if (raw.bambiConfigStale !== undefined) updates.bambiConfigStale = Boolean(raw.bambiConfigStale);
+
+  if (raw.bambiDomains !== undefined) {
+    updates.bambiDomains = Array.isArray(raw.bambiDomains)
+      ? raw.bambiDomains.map(normalizeDomainInput).filter(Boolean)
+      : DEFAULT_DOMAINS;
+  }
+  if (raw.bambiBlacklist !== undefined) {
+    updates.bambiBlacklist = Array.isArray(raw.bambiBlacklist)
+      ? raw.bambiBlacklist.map(v => String(v || "").trim().toLowerCase()).filter(Boolean)
+      : [];
+  }
+
+  if (raw.bambiIntentWindowMs !== undefined) {
+    const intent = toIntegerOrDefault(raw.bambiIntentWindowMs, DEFAULT_INTENT_WINDOW_MS);
+    updates.bambiIntentWindowMs = [1200, 2200, 3200].includes(intent) ? intent : DEFAULT_INTENT_WINDOW_MS;
+  }
+
+  if (raw.bambiManualShortcut !== undefined) {
+    const shortcut = String(raw.bambiManualShortcut || "").trim();
+    const validShortcuts = ["Alt+Shift+V", "Ctrl+Shift+V", "Alt+V", "Ctrl+Alt+V"];
+    updates.bambiManualShortcut = validShortcuts.includes(shortcut) ? shortcut : DEFAULT_MANUAL_SHORTCUT;
+  }
+
+  if (raw.bambiInputLockDurationMs !== undefined) {
+    const lockDuration = toIntegerOrDefault(raw.bambiInputLockDurationMs, 3600000);
+    const validDurations = [600000, 1200000, 3600000, 7200000, 14400000, 21600000, 28800000, 43200000];
+    updates.bambiInputLockDurationMs = validDurations.includes(lockDuration) ? lockDuration : 3600000;
+  }
+  if (raw.bambiInputLockLockedUntil !== undefined) {
+    const lockUntil = Math.max(0, toIntegerOrDefault(raw.bambiInputLockLockedUntil, 0));
+    updates.bambiInputLockLockedUntil = lockUntil;
+  }
+
+  const importedUrls = normalizeAutoPlayUrlList(raw.bambiAutoPlayUrls, raw.bambiAutoPlayUrl || "");
+  if (raw.bambiAutoPlayUrls !== undefined || raw.bambiAutoPlayUrl !== undefined) {
+    updates.bambiAutoPlayUrls = importedUrls;
+    updates.bambiAutoPlayUrl = importedUrls[0] || "";
+  }
+
+  if (raw.bambiAutoPlayDelayMs !== undefined) {
+    const delay = toIntegerOrDefault(raw.bambiAutoPlayDelayMs, 600000);
+    updates.bambiAutoPlayDelayMs = AUTOPLAY_DELAY_OPTIONS_MS.includes(delay) ? delay : 600000;
+  }
+  if (raw.bambiAutoPlayLastTriggerAt !== undefined) {
+    updates.bambiAutoPlayLastTriggerAt = Math.max(0, toIntegerOrDefault(raw.bambiAutoPlayLastTriggerAt, 0));
+  }
+
+  if (raw.bambiDomainPlayerHints !== undefined) updates.bambiDomainPlayerHints = toPlainObject(raw.bambiDomainPlayerHints);
+  if (raw.bambiDomainAssocMap !== undefined) updates.bambiDomainAssocMap = toPlainObject(raw.bambiDomainAssocMap);
+  if (raw.bambiRemotePlayerHints !== undefined) updates.bambiRemotePlayerHints = toPlainObject(raw.bambiRemotePlayerHints);
+
+  if (raw.bambiDomainAssocMapFetchedAt !== undefined) {
+    updates.bambiDomainAssocMapFetchedAt = Math.max(0, toIntegerOrDefault(raw.bambiDomainAssocMapFetchedAt, 0));
+  }
+
+  if (raw.bambiPresets !== undefined) {
+    updates.bambiPresets = Array.isArray(raw.bambiPresets) ? raw.bambiPresets : [];
+  }
+  if (raw.bambiAdDomains !== undefined) {
+    updates.bambiAdDomains = Array.isArray(raw.bambiAdDomains)
+      ? raw.bambiAdDomains.map(v => String(v || "").trim().toLowerCase()).filter(Boolean)
+      : [];
+  }
+  if (raw.bambiConfigVersion !== undefined) {
+    updates.bambiConfigVersion = raw.bambiConfigVersion;
+  }
+
+  return updates;
+}
 
 function markLikelyVlcPlaybackActive(durationMs = DEFAULT_VLC_ACTIVE_PLAYBACK_MS, source = "popup-local-file") {
   const startedAt = Date.now();
@@ -560,10 +766,13 @@ document.addEventListener("DOMContentLoaded", () => {
   const inputLockReasonBadge = document.getElementById("inputLockReasonBadge");
   const autoPlayToggle = document.getElementById("autoPlayToggle");
   const autoPlaySettings = document.getElementById("autoPlaySettings");
-  const autoPlayUrlInput = document.getElementById("autoPlayUrlInput");
+  const autoPlayUrlsInput = document.getElementById("autoPlayUrlsInput");
   const autoPlayDelaySelect = document.getElementById("autoPlayDelaySelect");
   const addDomainBtn = document.getElementById("addBtn");
   const domainInput = document.getElementById("domainInput");
+  const exportSettingsBtn = document.getElementById("exportSettingsBtn");
+  const importSettingsBtn = document.getElementById("importSettingsBtn");
+  const settingsImportInput = document.getElementById("settingsImportInput");
 
   let inputLockDurationMs = 3600000;
   let inputLockLockedUntil = 0;
@@ -597,7 +806,7 @@ document.addEventListener("DOMContentLoaded", () => {
     masterToggle.disabled = lockdownActive;
     multiMonitorToggle.disabled = lockdownActive;
     autoPlayToggle.disabled = lockdownActive;
-    autoPlayUrlInput.disabled = lockdownActive;
+    autoPlayUrlsInput.disabled = lockdownActive;
     autoPlayDelaySelect.disabled = lockdownActive;
     addDomainBtn.disabled = lockdownActive;
     domainInput.disabled = lockdownActive;
@@ -703,6 +912,7 @@ document.addEventListener("DOMContentLoaded", () => {
       bambiInputLockLockedUntil: 0,
       bambiAutoPlayEnabled: false,
       bambiAutoPlayUrl: "",
+      bambiAutoPlayUrls: [],
       bambiAutoPlayDelayMs: 600000,
       bambiAutoPlayLastTriggerAt: 0,
     },
@@ -725,11 +935,20 @@ document.addEventListener("DOMContentLoaded", () => {
       }
       autoPlayToggle.checked = Boolean(data.bambiAutoPlayEnabled);
       autoPlaySettings.style.display = data.bambiAutoPlayEnabled ? "" : "none";
-      autoPlayUrlInput.value = data.bambiAutoPlayUrl || "";
+      const normalizedAutoPlayUrls = normalizeAutoPlayUrlList(data.bambiAutoPlayUrls, data.bambiAutoPlayUrl || "");
+      autoPlayUrlsInput.value = autoPlayUrlsToText(normalizedAutoPlayUrls);
+      if (
+        JSON.stringify(normalizedAutoPlayUrls) !== JSON.stringify(Array.isArray(data.bambiAutoPlayUrls) ? data.bambiAutoPlayUrls : []) ||
+        (data.bambiAutoPlayUrl || "") !== (normalizedAutoPlayUrls[0] || "")
+      ) {
+        chrome.storage.local.set({
+          bambiAutoPlayUrls: normalizedAutoPlayUrls,
+          bambiAutoPlayUrl: normalizedAutoPlayUrls[0] || "",
+        });
+      }
       updateLastTriggerDisplay(data.bambiAutoPlayLastTriggerAt || 0);
-      const validDelays = [300000,600000,900000,1200000,1800000,2700000,3600000];
       const savedDelay = Number(data.bambiAutoPlayDelayMs);
-      autoPlayDelaySelect.value = String(validDelays.includes(savedDelay) ? savedDelay : 600000);
+      autoPlayDelaySelect.value = String(AUTOPLAY_DELAY_OPTIONS_MS.includes(savedDelay) ? savedDelay : 600000);
       manualShortcutToggle.checked = Boolean(data.bambiManualShortcutEnabled);
       const selectedShortcut = String(data.bambiManualShortcut || DEFAULT_MANUAL_SHORTCUT);
       manualShortcutSelect.value = ["Alt+Shift+V", "Ctrl+Shift+V", "Alt+V", "Ctrl+Alt+V"].includes(selectedShortcut)
@@ -884,6 +1103,13 @@ document.addEventListener("DOMContentLoaded", () => {
         syncLockdownManagedSettings();
       }
     }
+    if (changes.bambiAutoPlayUrls !== undefined || changes.bambiAutoPlayUrl !== undefined) {
+      const nextUrls = normalizeAutoPlayUrlList(
+        changes.bambiAutoPlayUrls?.newValue,
+        changes.bambiAutoPlayUrl?.newValue || ""
+      );
+      autoPlayUrlsInput.value = autoPlayUrlsToText(nextUrls);
+    }
     if (changes.bambiDomains !== undefined) {
       const nextDomains = (changes.bambiDomains.newValue || []).map(normalizeDomainInput).filter(Boolean);
       renderDomains(nextDomains);
@@ -921,11 +1147,16 @@ document.addEventListener("DOMContentLoaded", () => {
     chrome.storage.local.set({ bambiAutoPlayEnabled: enabled });
     autoPlaySettings.style.display = enabled ? "" : "none";
   });
-  autoPlayUrlInput.addEventListener("change", e => {
+  autoPlayUrlsInput.addEventListener("change", e => {
     if (isInputLockLockdownActive()) {
       return;
     }
-    chrome.storage.local.set({ bambiAutoPlayUrl: e.target.value.trim() });
+    const urls = parseAutoPlayUrlsFromText(e.target.value);
+    autoPlayUrlsInput.value = autoPlayUrlsToText(urls);
+    chrome.storage.local.set({
+      bambiAutoPlayUrls: urls,
+      bambiAutoPlayUrl: urls[0] || "",
+    });
   });
   autoPlayDelaySelect.addEventListener("change", e => {
     if (isInputLockLockdownActive()) {
@@ -934,6 +1165,43 @@ document.addEventListener("DOMContentLoaded", () => {
     const val = Number(e.target.value);
     if (!val) return;
     chrome.storage.local.set({ bambiAutoPlayDelayMs: val });
+  });
+
+  exportSettingsBtn?.addEventListener("click", async () => {
+    const data = await new Promise(resolve => chrome.storage.local.get(SETTINGS_EXPORT_DEFAULTS, resolve));
+    const normalizedUrls = normalizeAutoPlayUrlList(data.bambiAutoPlayUrls, data.bambiAutoPlayUrl || "");
+    data.bambiAutoPlayUrls = normalizedUrls;
+    data.bambiAutoPlayUrl = normalizedUrls[0] || "";
+    const xml = buildSettingsXml(data);
+    const stamp = new Date().toISOString().replace(/[:]/g, "-").replace(/\..+/, "");
+    ensureDownload(`bambi-settings-${stamp}.xml`, "application/xml", xml);
+  });
+
+  importSettingsBtn?.addEventListener("click", () => {
+    settingsImportInput?.click();
+  });
+
+  settingsImportInput?.addEventListener("change", async () => {
+    const file = settingsImportInput.files && settingsImportInput.files[0];
+    if (!file) return;
+    try {
+      const xmlText = await file.text();
+      const raw = parseSettingsXml(xmlText);
+      const updates = sanitizeImportedSettings(raw);
+      if (!Object.keys(updates).length) {
+        alert("No supported settings found in this XML file.");
+        return;
+      }
+      await chrome.storage.local.set(updates);
+      await loadConfigStatus();
+      await loadUpdateStatus();
+      updateInputLockUi();
+      alert("Settings imported successfully.");
+    } catch (err) {
+      alert(`Import failed: ${err?.message || "Unknown error"}`);
+    } finally {
+      settingsImportInput.value = "";
+    }
   });
 
   // Manual-mode click sensitivity
