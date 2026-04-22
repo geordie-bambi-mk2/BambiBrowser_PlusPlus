@@ -1,4 +1,7 @@
 # BambiBrowser+
+For full docs and feature walkthroughs, use:
+
+https://geordie-bambi-mk2.github.io/bbrowser-resources/index.html
 
 Quick setup for running the extension locally.
 
@@ -34,9 +37,6 @@ If it is running, the extension can hand video playback to VLC through the local
 
 ## Full guide pages
 
-For full docs and feature walkthroughs, use:
-
-https://geordie-bambi-mk2.github.io/bbrowser-resources/index.html
 
 ## Credits
 
