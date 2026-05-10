@@ -15,6 +15,7 @@ if (window.__bambiLoaded) {
   const BAMBI_SERVER = "http://127.0.0.1:5655";
   const BAMBI_ENDPOINT = BAMBI_SERVER + "/play";
   const BAMBI_STATUS_ENDPOINT = BAMBI_SERVER + "/status";
+  const BAMBI_STOP_ENDPOINT = BAMBI_SERVER + "/stop";
   const DEFAULT_DOMAINS = ["hypnotube.com"];
   const AUTO_MODE_DOMAINS = ["hypnotube.com"]; // Domains that use auto-play, not manual
   const DEFAULT_INTENT_WINDOW_MS = 2200;
@@ -339,6 +340,12 @@ if (window.__bambiLoaded) {
   let bambiRemotePlayerHints = {};
   let bambiConfigStale = false;
   let bambiConfigVersion = null;
+
+  // Max video length
+  let bambiMaxVideoLengthEnabled = false;
+  let bambiMaxVideoLengthMins = 15;
+  let bambiMaxVideoLengthAction = "soft-unlock"; // "soft-unlock" | "exit" | "auto-skip"
+  let maxVideoLengthTimerId = null;
 
   // ------------------------------------------------------
   // DOMAIN MATCHING
@@ -694,6 +701,17 @@ if (window.__bambiLoaded) {
       bambiAutoPlayDelayMs = Number(changes.bambiAutoPlayDelayMs.newValue) || 600000;
       if (bambiAutoPlayEnabled) scheduleAutoPlayFallback();
     }
+    if (changes.bambiMaxVideoLengthEnabled !== undefined) {
+      bambiMaxVideoLengthEnabled = Boolean(changes.bambiMaxVideoLengthEnabled.newValue);
+    }
+    if (changes.bambiMaxVideoLengthMins !== undefined) {
+      bambiMaxVideoLengthMins = Math.max(1, Number(changes.bambiMaxVideoLengthMins.newValue) || 15);
+    }
+    if (changes.bambiMaxVideoLengthAction !== undefined) {
+      bambiMaxVideoLengthAction = ["soft-unlock", "exit", "auto-skip"].includes(changes.bambiMaxVideoLengthAction.newValue)
+        ? changes.bambiMaxVideoLengthAction.newValue
+        : "soft-unlock";
+    }
   });
 
   // ------------------------------------------------------
@@ -1011,6 +1029,14 @@ if (window.__bambiLoaded) {
       }
 
       console.log("[Bambi] manual trigger selected:", pickedUrl.substring(0, 80));
+
+      // Auto-skip if video exceeds the configured max length
+      if (isVideoTooLong(pickedVideo)) {
+        console.log("[Bambi] manual trigger: video duration (" + pickedVideo.duration.toFixed(0) + "s) exceeds max limit (" + bambiMaxVideoLengthMins + " min) → auto-skip");
+        removeManualTriggerOverlay();
+        return;
+      }
+
       pickedVideo.pause();
       pickedVideo.autoplay = false;
 
@@ -1021,6 +1047,7 @@ if (window.__bambiLoaded) {
           markLikelyVlcPlaybackActive(estimateLikelyVlcPlaybackMs(pickedVideo), "manual-trigger");
           videoAlreadySent = true;
           cancelAutoPlayFallback();
+          scheduleMaxVideoLengthTimer();
           removeManualTriggerOverlay();
           return;
         }
@@ -1212,6 +1239,161 @@ if (window.__bambiLoaded) {
     if (autoPlayFallbackTimerId !== null) { clearTimeout(autoPlayFallbackTimerId); autoPlayFallbackTimerId = null; }
   }
 
+  // ------------------------------------------------------
+  // MAX VIDEO LENGTH HELPERS
+  // ------------------------------------------------------
+  function cancelMaxVideoLengthTimer() {
+    if (maxVideoLengthTimerId !== null) {
+      clearTimeout(maxVideoLengthTimerId);
+      maxVideoLengthTimerId = null;
+    }
+  }
+
+  function playMaxLengthNotificationSound() {
+    try {
+      const ctx = new AudioContext();
+      [0, 0.32, 0.64].forEach(t => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.type = "sine";
+        osc.frequency.value = 880;
+        gain.gain.setValueAtTime(0.0, ctx.currentTime + t);
+        gain.gain.linearRampToValueAtTime(0.35, ctx.currentTime + t + 0.02);
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + t + 0.22);
+        osc.start(ctx.currentTime + t);
+        osc.stop(ctx.currentTime + t + 0.22);
+      });
+      setTimeout(() => { try { ctx.close(); } catch (_) {} }, 2500);
+    } catch (e) {
+      console.warn("[Bambi] could not play notification sound:", e);
+    }
+  }
+
+  async function stopVlcAndReset() {
+    cancelMaxVideoLengthTimer();
+    try {
+      await fetch(BAMBI_STOP_ENDPOINT, { method: "POST", cache: "no-store" });
+    } catch (e) {
+      console.warn("[Bambi] /stop request failed:", e);
+    }
+    bambiInputLockEnabled = false;
+    bambiInputLockLockedUntil = 0;
+    safeStorageSet({ bambiInputLockEnabled: false, bambiInputLockLockedUntil: 0 });
+    if (document.fullscreenElement) {
+      document.exitFullscreen().catch(() => {});
+    }
+    window.removeEventListener("keydown", suppressKeys, true);
+    window.removeEventListener("keyup", suppressKeys, true);
+    if (navigator.keyboard?.unlock) {
+      navigator.keyboard.unlock().catch(() => {});
+    }
+    document.exitPointerLock?.();
+    resetVideoState();
+    cancelAutoPlayFallback();
+  }
+
+  async function scheduleMaxVideoLengthTimer() {
+    cancelMaxVideoLengthTimer();
+    if (!bambiMaxVideoLengthEnabled) return;
+
+    const limitSec = bambiMaxVideoLengthMins * 60;
+
+    if (bambiMaxVideoLengthAction === "auto-skip") {
+      // The video's duration may have been NaN at detection time so it wasn't skipped
+      // then. Poll VLC's /status for length_sec and stop immediately if it exceeds the
+      // limit — giving true skip behaviour within a few seconds of VLC opening.
+      // If VLC never reports a finite length, we fall back to a hard stop at the limit.
+      const pollIntervalMs = 1500;
+      const startedAt = Date.now();
+      console.log("[Bambi] auto-skip: polling VLC for video length (limit:", bambiMaxVideoLengthMins, "min)");
+
+      async function pollAutoSkip() {
+        // Abort if state was reset externally (e.g. SPA navigation).
+        if (!videoAlreadySent) return;
+
+        const elapsed = Date.now() - startedAt;
+        if (elapsed >= limitSec * 1000) {
+          console.log("[Bambi] auto-skip: time limit reached before length was known → stopping VLC");
+          await stopVlcAndReset();
+          return;
+        }
+
+        const controller = new AbortController();
+        const abortTimer = setTimeout(() => controller.abort(), 1200);
+        try {
+          const response = await fetch(BAMBI_STATUS_ENDPOINT, {
+            method: "GET",
+            cache: "no-store",
+            signal: controller.signal,
+          });
+          if (response.ok) {
+            const payload = await response.json();
+            const lengthSec = Number(payload?.length_sec);
+            if (Number.isFinite(lengthSec) && lengthSec > 0) {
+              if (lengthSec > limitSec) {
+                console.log("[Bambi] auto-skip: VLC reports length", lengthSec.toFixed(0), "s > limit", limitSec, "s → stopping");
+                await stopVlcAndReset();
+              } else {
+                console.log("[Bambi] auto-skip: VLC reports length", lengthSec.toFixed(0), "s ≤ limit", limitSec, "s → within limit, allowing");
+              }
+              return;
+            }
+          }
+        } catch {
+          // Network error or abort — retry on next poll.
+        } finally {
+          clearTimeout(abortTimer);
+        }
+
+        // Length not yet available — try again.
+        maxVideoLengthTimerId = setTimeout(pollAutoSkip, pollIntervalMs);
+      }
+
+      // Give VLC a moment to open and start loading before the first poll.
+      maxVideoLengthTimerId = setTimeout(pollAutoSkip, 2000);
+      return;
+    }
+
+    // ── soft-unlock / exit: fire action at the configured time limit ──────────
+    const durationMs = limitSec * 1000;
+    console.log("[Bambi] max video length timer set for", bambiMaxVideoLengthMins, "min → action:", bambiMaxVideoLengthAction);
+    maxVideoLengthTimerId = setTimeout(async () => {
+      maxVideoLengthTimerId = null;
+      console.log("[Bambi] max video length reached (" + bambiMaxVideoLengthMins + " min) → action:", bambiMaxVideoLengthAction);
+
+      if (bambiMaxVideoLengthAction === "soft-unlock") {
+        // Play a beep sequence, then unlock input without stopping the video.
+        playMaxLengthNotificationSound();
+        bambiInputLockEnabled = false;
+        bambiInputLockLockedUntil = 0;
+        safeStorageSet({ bambiInputLockEnabled: false, bambiInputLockLockedUntil: 0 });
+        if (navigator.keyboard?.unlock) {
+          navigator.keyboard.unlock().catch(() => {});
+        }
+        document.exitPointerLock?.();
+        window.removeEventListener("keydown", suppressKeys, true);
+        window.removeEventListener("keyup", suppressKeys, true);
+        console.log("[Bambi] soft-unlock: input lock released, video continues");
+
+      } else if (bambiMaxVideoLengthAction === "exit") {
+        // Stop VLC, exit fullscreen, unlock everything.
+        console.log("[Bambi] exit: stopping VLC");
+        await stopVlcAndReset();
+      }
+    }, durationMs);
+  }
+
+  function isVideoTooLong(videoEl) {
+    if (!bambiMaxVideoLengthEnabled) return false;
+    if (bambiMaxVideoLengthAction !== "auto-skip") return false;
+    if (!(videoEl instanceof HTMLVideoElement)) return false;
+    const duration = Number(videoEl.duration);
+    if (!Number.isFinite(duration) || duration <= 0) return false;
+    return duration > bambiMaxVideoLengthMins * 60;
+  }
+
   function suppressKeys(e) {
     // Explicitly block Windows/Meta key, Alt, F11, Escape
     if (e.key === "Meta" || e.metaKey || e.key === "Alt" || e.altKey || e.key === "F11" || e.code === "Escape") {
@@ -1252,6 +1434,7 @@ if (window.__bambiLoaded) {
     videoAlreadySent = false;
     mainVideo = null;
     manualPlayGraceUntil = 0;
+    cancelMaxVideoLengthTimer();
     console.log("[Bambi] URL change detected → video state reset");
   }
 
@@ -1618,6 +1801,13 @@ if (window.__bambiLoaded) {
 
     // Pause in-page player and send to VLC with fullscreen
     console.log("[Bambi] pausing in-page player and preparing VLC launch");
+
+    // Auto-skip if video exceeds the configured max length
+    if (isVideoTooLong(videoElement)) {
+      console.log("[Bambi] video duration (" + videoElement.duration.toFixed(0) + "s) exceeds max limit (" + bambiMaxVideoLengthMins + " min) → auto-skip");
+      return;
+    }
+
     videoElement.pause();
     videoElement.autoplay = false;
 
@@ -1628,6 +1818,7 @@ if (window.__bambiLoaded) {
         markLikelyVlcPlaybackActive(estimateLikelyVlcPlaybackMs(videoElement), "manual-mode");
         videoAlreadySent = true;
         cancelAutoPlayFallback();
+        scheduleMaxVideoLengthTimer();
         return;
       }
     }
@@ -1760,6 +1951,13 @@ if (window.__bambiLoaded) {
       return;
     }
 
+    // Auto-skip if video exceeds the configured max length
+    if (isVideoTooLong(v)) {
+      console.log("[Bambi] video duration (" + v.duration.toFixed(0) + "s) exceeds max limit (" + bambiMaxVideoLengthMins + " min) → auto-skip");
+      mainVideo = null;
+      return;
+    }
+
     if (serverAvailable) {
       console.log("[Bambi] server available → sending to VLC");
       const sent = await sendVideoToServer(videoSrc);
@@ -1768,6 +1966,7 @@ if (window.__bambiLoaded) {
         markLikelyVlcPlaybackActive(estimateLikelyVlcPlaybackMs(v), "auto-mode");
         videoAlreadySent = true;
         cancelAutoPlayFallback();
+        scheduleMaxVideoLengthTimer();
         v.pause();
         v.autoplay = false;
         return;
@@ -1934,6 +2133,7 @@ if (window.__bambiLoaded) {
 
       console.log("[Bambi] main video ended → exiting fullscreen");
       cancelAutoPlayFallback();
+      cancelMaxVideoLengthTimer();
 
       if (document.fullscreenElement) {
         document.exitFullscreen().catch(err =>
@@ -1980,6 +2180,9 @@ if (window.__bambiLoaded) {
       bambiAutoPlayUrls: [],
       bambiAutoPlayDelayMs: 600000,
       bambiVlcPlaybackUntil: 0,
+      bambiMaxVideoLengthEnabled: false,
+      bambiMaxVideoLengthMins: 15,
+      bambiMaxVideoLengthAction: "soft-unlock",
     },
     async (data) => {
       bambiActivated  = Boolean(data.bambiActivated);
@@ -2013,6 +2216,11 @@ if (window.__bambiLoaded) {
         bambiAutoPlayUrl: bambiAutoPlayUrls[0] || "",
       });
       bambiAutoPlayDelayMs = Number(data.bambiAutoPlayDelayMs) || 600000;
+      bambiMaxVideoLengthEnabled = Boolean(data.bambiMaxVideoLengthEnabled);
+      bambiMaxVideoLengthMins = Math.max(1, Number(data.bambiMaxVideoLengthMins) || 15);
+      bambiMaxVideoLengthAction = ["soft-unlock", "exit", "auto-skip"].includes(data.bambiMaxVideoLengthAction)
+        ? data.bambiMaxVideoLengthAction
+        : "soft-unlock";
       userIntentWindowMs = Number.isFinite(Number(data.bambiIntentWindowMs))
         ? Number(data.bambiIntentWindowMs)
         : DEFAULT_INTENT_WINDOW_MS;

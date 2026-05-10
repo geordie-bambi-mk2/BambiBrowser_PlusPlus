@@ -693,6 +693,30 @@
           </select>
           <div class="setting-help">Used on custom domains to match click intent with video play events.</div>
         </div>
+        <div class="setting-row" style="margin-top:14px;border-top:1px solid #2a0e2a;padding-top:12px">
+          <div class="toggle-row" style="margin-bottom:8px">
+            <span class="toggle-label">Max video length</span>
+            <label class="switch">
+              <input type="checkbox" id="maxVideoLengthToggle">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div id="maxVideoLengthSettings" style="display:none">
+            <div class="setting-row">
+              <label for="maxVideoLengthMinsInput" class="setting-label">Max length (minutes)</label>
+              <input type="number" id="maxVideoLengthMinsInput" class="setting-select" min="1" max="600" value="15" style="appearance:textfield">
+            </div>
+            <div class="setting-row">
+              <label for="maxVideoLengthActionSelect" class="setting-label">When limit is reached</label>
+              <select id="maxVideoLengthActionSelect" class="setting-select">
+                <option value="soft-unlock">Unlock input at limit (video continues)</option>
+                <option value="exit">Stop and exit at limit</option>
+                <option value="auto-skip">Skip videos that exceed limit</option>
+              </select>
+              <div class="setting-help" id="maxVideoLengthActionHelp"></div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="section">

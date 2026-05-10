@@ -38,6 +38,9 @@ const SETTINGS_EXPORT_DEFAULTS = {
   bambiRemotePlayerHints: {},
   bambiConfigVersion: null,
   bambiConfigStale: false,
+  bambiMaxVideoLengthEnabled: false,
+  bambiMaxVideoLengthMins: 15,
+  bambiMaxVideoLengthAction: "soft-unlock",
 };
 
 function isHttpUrl(value) {
@@ -213,6 +216,16 @@ function sanitizeImportedSettings(rawSettings) {
   }
   if (raw.bambiConfigVersion !== undefined) {
     updates.bambiConfigVersion = raw.bambiConfigVersion;
+  }
+
+  if (raw.bambiMaxVideoLengthEnabled !== undefined) updates.bambiMaxVideoLengthEnabled = Boolean(raw.bambiMaxVideoLengthEnabled);
+  if (raw.bambiMaxVideoLengthMins !== undefined) {
+    const mins = toIntegerOrDefault(raw.bambiMaxVideoLengthMins, 15);
+    updates.bambiMaxVideoLengthMins = (Number.isFinite(mins) && mins >= 1 && mins <= 600) ? mins : 15;
+  }
+  if (raw.bambiMaxVideoLengthAction !== undefined) {
+    const action = String(raw.bambiMaxVideoLengthAction || "");
+    updates.bambiMaxVideoLengthAction = ["soft-unlock", "exit", "auto-skip"].includes(action) ? action : "soft-unlock";
   }
 
   return updates;
@@ -765,6 +778,23 @@ document.addEventListener("DOMContentLoaded", () => {
   const inputLockLockdownStatus = document.getElementById("inputLockLockdownStatus");
   const inputLockReasonBadge = document.getElementById("inputLockReasonBadge");
   const autoPlayToggle = document.getElementById("autoPlayToggle");
+  const maxVideoLengthToggle = document.getElementById("maxVideoLengthToggle");
+  const maxVideoLengthSettings = document.getElementById("maxVideoLengthSettings");
+  const maxVideoLengthMinsInput = document.getElementById("maxVideoLengthMinsInput");
+  const maxVideoLengthActionSelect = document.getElementById("maxVideoLengthActionSelect");
+  const maxVideoLengthActionHelp = document.getElementById("maxVideoLengthActionHelp");
+
+  const MAX_VIDEO_LENGTH_ACTION_HELP = {
+    "soft-unlock": "At the time limit, input lock turns off with a notification sound. The video keeps playing in VLC and you can exit when ready.",
+    "exit": "At the time limit, VLC stops and input lock turns off, as if the video ended normally.",
+    "auto-skip": "When a video is detected, if its duration exceeds the limit it is skipped immediately and not sent to VLC.",
+  };
+
+  function updateMaxVideoLengthActionHelp() {
+    if (maxVideoLengthActionHelp && maxVideoLengthActionSelect) {
+      maxVideoLengthActionHelp.textContent = MAX_VIDEO_LENGTH_ACTION_HELP[maxVideoLengthActionSelect.value] || "";
+    }
+  }
   const autoPlaySettings = document.getElementById("autoPlaySettings");
   const autoPlayUrlsInput = document.getElementById("autoPlayUrlsInput");
   const autoPlayDelaySelect = document.getElementById("autoPlayDelaySelect");
@@ -915,6 +945,9 @@ document.addEventListener("DOMContentLoaded", () => {
       bambiAutoPlayUrls: [],
       bambiAutoPlayDelayMs: 600000,
       bambiAutoPlayLastTriggerAt: 0,
+      bambiMaxVideoLengthEnabled: false,
+      bambiMaxVideoLengthMins: 15,
+      bambiMaxVideoLengthAction: "soft-unlock",
     },
     data => {
       masterToggle.checked = data.bambiActivated;
@@ -968,6 +1001,15 @@ document.addEventListener("DOMContentLoaded", () => {
       renderPresets(normalizedDomains);
       renderBlacklist(data.bambiBlacklist);
       updateInputLockUi();
+
+      // Max video length
+      maxVideoLengthToggle.checked = Boolean(data.bambiMaxVideoLengthEnabled);
+      maxVideoLengthSettings.style.display = data.bambiMaxVideoLengthEnabled ? "" : "none";
+      const savedMins = Number(data.bambiMaxVideoLengthMins);
+      maxVideoLengthMinsInput.value = String(Number.isFinite(savedMins) && savedMins >= 1 ? Math.floor(savedMins) : 15);
+      const savedAction = String(data.bambiMaxVideoLengthAction || "soft-unlock");
+      maxVideoLengthActionSelect.value = ["soft-unlock", "exit", "auto-skip"].includes(savedAction) ? savedAction : "soft-unlock";
+      updateMaxVideoLengthActionHelp();
     }
   );
 
@@ -1117,6 +1159,19 @@ document.addEventListener("DOMContentLoaded", () => {
     if (changes.bambiAutoPlayLastTriggerAt !== undefined) {
       updateLastTriggerDisplay(changes.bambiAutoPlayLastTriggerAt.newValue || 0);
     }
+    if (changes.bambiMaxVideoLengthEnabled !== undefined) {
+      maxVideoLengthToggle.checked = Boolean(changes.bambiMaxVideoLengthEnabled.newValue);
+      maxVideoLengthSettings.style.display = maxVideoLengthToggle.checked ? "" : "none";
+    }
+    if (changes.bambiMaxVideoLengthMins !== undefined) {
+      const nextMins = Number(changes.bambiMaxVideoLengthMins.newValue) || 15;
+      maxVideoLengthMinsInput.value = String(nextMins);
+    }
+    if (changes.bambiMaxVideoLengthAction !== undefined) {
+      const nextAction = String(changes.bambiMaxVideoLengthAction.newValue || "soft-unlock");
+      maxVideoLengthActionSelect.value = ["soft-unlock", "exit", "auto-skip"].includes(nextAction) ? nextAction : "soft-unlock";
+      updateMaxVideoLengthActionHelp();
+    }
   });
 
   // Auto-play fallback
@@ -1219,6 +1274,24 @@ document.addEventListener("DOMContentLoaded", () => {
     const value = String(e.target.value || "").trim();
     if (!value) return;
     chrome.storage.local.set({ bambiManualShortcut: value });
+  });
+
+  // Max video length
+  maxVideoLengthToggle.addEventListener("change", e => {
+    const enabled = e.target.checked;
+    chrome.storage.local.set({ bambiMaxVideoLengthEnabled: enabled });
+    maxVideoLengthSettings.style.display = enabled ? "" : "none";
+  });
+
+  maxVideoLengthMinsInput.addEventListener("change", e => {
+    const val = Math.max(1, Math.min(600, Math.floor(Number(e.target.value) || 15)));
+    maxVideoLengthMinsInput.value = String(val);
+    chrome.storage.local.set({ bambiMaxVideoLengthMins: val });
+  });
+
+  maxVideoLengthActionSelect.addEventListener("change", e => {
+    chrome.storage.local.set({ bambiMaxVideoLengthAction: e.target.value });
+    updateMaxVideoLengthActionHelp();
   });
 
   // -------------------------------------------------------
@@ -1377,7 +1450,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Help button — opens guide in a new tab
   document.getElementById("helpBtn").addEventListener("click", () => {
-    chrome.tabs.create({ url: "https://geordie-bambi-mk2.github.io/bbrowser-resources/guide/" });
+    chrome.tabs.create({ url: "https://geordie-bambi-mk2.github.io/bbrowser-resources/" });
   });
 
   // Server status indicator + live playback clock.
